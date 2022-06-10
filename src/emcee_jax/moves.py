@@ -1,6 +1,7 @@
 from functools import wraps
 from typing import Any, Callable, Tuple
 
+import jax
 import jax.numpy as jnp
 from jax import random
 
@@ -44,7 +45,7 @@ def red_blue(
             ) -> Tuple[Array, Array, Array, Array]:
                 key1, key2 = random.split(key)
                 q, f = proposal(key1, s, c)
-                nlp, ndet = log_prob_fn(q)
+                nlp, ndet = jax.vmap(log_prob_fn)(q)
                 diff = f + nlp - lp
                 accept = jnp.exp(diff) > random.uniform(key2, shape=lp.shape)
                 return (

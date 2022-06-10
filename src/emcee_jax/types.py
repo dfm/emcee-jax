@@ -31,4 +31,4 @@ WrappedLogProbFn = Callable[[Array], Array]
 class Trace(NamedTuple):
     final_state: WalkerState
     samples: WalkerState
-    stats: SamplerStats
+    sampler_stats: SamplerStats

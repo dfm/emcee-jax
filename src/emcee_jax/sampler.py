@@ -56,14 +56,23 @@ def build_sampler(
         # Deal with the case where deterministics are not provided
         deterministics = deterministics.reshape((coordinates.shape[0], -1))
 
+        if log_probability is None:
+            raise ValueError(
+                "The initial log_probability is None, but it must be a scalar "
+                "for each walker"
+            )
+        if log_probability.shape != coordinates.shape[:1]:
+            raise ValueError(
+                "Invalid shape for initial log_probability: expected "
+                f"{coordinates.shape[:1]} but found {log_probability.shape}"
+            )
+
         # TODO: This call to vmap could probably be replaced directly with the
         # batching primitives to take advantage of chaining of linear_util
         # wrapped functions for better performance.
-        flat_log_prob_fn = jax.vmap(
-            flatten_log_prob_fn(
-                wrapped_log_prob_fn, unravel_coordinates
-            ).call_wrapped
-        )
+        flat_log_prob_fn = flatten_log_prob_fn(
+            wrapped_log_prob_fn, unravel_coordinates
+        ).call_wrapped
 
         # Set up a flattened version of the ensemble state
         initial_ensemble = WalkerState(
@@ -109,7 +118,9 @@ def build_sampler(
             log_probability=samples.log_probability,
         )
         return Trace(
-            final_state=final_ensemble, samples=samples, stats=sampler_stats
+            final_state=final_ensemble,
+            samples=samples,
+            sampler_stats=sampler_stats,
         )
 
     return sample
@@ -121,14 +132,13 @@ def handle_deterministics(
 ) -> Generator[Tuple[Any, Any], Tuple[Any, Any], None]:
     result = yield args, kwargs
 
-    try:
+    if isinstance(result, tuple):
         log_prob, *deterministics = result
-    except (ValueError, TypeError):
+        if len(deterministics) == 1:
+            deterministics = deterministics[0]
+    else:
         log_prob = result
         deterministics = None
-
-    if deterministics is not None and len(deterministics) == 1:
-        deterministics = deterministics[0]
 
     yield log_prob, deterministics
 
