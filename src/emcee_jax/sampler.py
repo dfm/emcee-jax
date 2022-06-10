@@ -1,9 +1,9 @@
-from functools import partial, wraps
+from functools import partial
 from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union
 
 import jax
-from jax import random
 import jax.linear_util as lu
+from jax import random
 from jax.flatten_util import ravel_pytree
 
 from emcee_jax.moves import stretch
@@ -129,7 +129,7 @@ def build_sampler(
 @lu.transformation
 def handle_deterministics(
     *args: Any, **kwargs: Any
-) -> Generator[Tuple[Any, Any], Tuple[Any, Any], None]:
+) -> Generator[Tuple[Any, Any], Union[Any, Tuple[Any, Any]], None]:
     result = yield args, kwargs
 
     if isinstance(result, tuple):
