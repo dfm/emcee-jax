@@ -70,7 +70,7 @@ from emcee_jax.host_callback import wrap_python_log_prob_fn
 
 # A log prob function that uses numpy, not jax.numpy inside
 @wrap_python_log_prob_fn
-def python_log_prob(theta, a1=100.0, a2=20.0):
+def log_prob(theta, a1=100.0, a2=20.0):
     x1, x2 = theta
     return -(a1 * np.square(x2 - x1**2) + np.square(1 - x1)) / a2
 
