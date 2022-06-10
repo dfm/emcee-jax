@@ -59,3 +59,24 @@ coords = jax.random.normal(key1, shape=(num_walkers, 2))
 sample = build_sampler(log_prob)
 trace = sample(key2, coords, steps=num_steps)
 ```
+
+You can even use pure-Python log probability functions:
+
+```python
+import jax
+import numpy as np
+from emcee_jax.sampler import build_sampler
+from emcee_jax.host_callback import wrap_python_log_prob_fn
+
+# A log prob function that uses numpy, not jax.numpy inside
+@wrap_python_log_prob_fn
+def python_log_prob(theta, a1=100.0, a2=20.0):
+    x1, x2 = theta
+    return -(a1 * np.square(x2 - x1**2) + np.square(1 - x1)) / a2
+
+num_walkers, num_steps = 100, 1000
+key1, key2 = jax.random.split(jax.random.PRNGKey(0))
+coords = jax.random.normal(key1, shape=(num_walkers, 2))
+sample = build_sampler(log_prob)
+trace = sample(key2, coords, steps=num_steps)
+```

@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+from emcee_jax.host_callback import wrap_python_log_prob_fn
 from emcee_jax.sampler import build_sampler
 
 
@@ -39,7 +40,7 @@ def test_pytree_input(seed=0, num_walkers=5, num_steps=21):
     key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     coords = {
         "x": jax.random.normal(key1, shape=(num_walkers,)),
-        "y": jax.random.normal(key1, shape=(num_walkers,)),
+        "y": jax.random.normal(key2, shape=(num_walkers,)),
     }
     sample = build_sampler(log_prob)
     trace = sample(key3, coords, steps=num_steps)
@@ -61,6 +62,25 @@ def test_deterministics(seed=0, num_walkers=5, num_steps=21):
     assert trace.samples.coordinates.shape == (num_steps, num_walkers, 2)
     assert trace.samples.log_probability.shape == shape
     assert trace.sampler_stats["accept"].shape == shape
+
+
+def test_host_callback(seed=0, num_walkers=5, num_steps=21):
+    import numpy as np
+
+    @wrap_python_log_prob_fn
+    def log_prob(theta, a1=100.0, a2=20.0):
+        x1, x2 = theta
+        return -(a1 * np.square(x2 - x1**2) + np.square(1 - x1)) / a2
+
+    num_walkers, num_steps = 100, 1000
+    key1, key2 = jax.random.split(jax.random.PRNGKey(0))
+    coords = jax.random.normal(key1, shape=(num_walkers, 2))
+    sample = build_sampler(log_prob)
+    trace = sample(key2, coords, steps=num_steps)
+    assert trace.samples.deterministics is None
+    assert trace.samples.coordinates.shape == (num_steps, num_walkers, 2)
+    assert trace.samples.log_probability.shape == (num_steps, num_walkers)
+    assert trace.sampler_stats["accept"].shape == (num_steps, num_walkers)
 
 
 def test_init_errors(seed=0, num_walkers=5, num_steps=21):

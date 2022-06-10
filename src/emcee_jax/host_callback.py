@@ -14,8 +14,8 @@ from emcee_jax.types import Array, LogProbFn
 def wrap_python_log_prob_fn(
     python_log_prob_fn: Callable[..., Array]
 ) -> LogProbFn:
-    @wraps(python_log_prob_fn)
     @custom_vmap
+    @wraps(python_log_prob_fn)
     def log_prob_fn(params: Array) -> Array:
         return host_callback.call(
             python_log_prob_fn,
@@ -24,7 +24,7 @@ def wrap_python_log_prob_fn(
         )
 
     @log_prob_fn.def_vmap
-    def vmap_rule(
+    def _(
         axis_size: int, in_batched: List[bool], params: Array
     ) -> Tuple[Array, bool]:
         assert in_batched[0]
