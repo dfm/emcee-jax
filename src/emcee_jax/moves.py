@@ -8,9 +8,10 @@ from emcee_jax.types import (
     Array,
     InitFn,
     MoveFn,
-    State,
-    Stats,
+    MoveState,
+    SamplerStats,
     StepFn,
+    WalkerState,
     WrappedLogProbFn,
 )
 
@@ -27,39 +28,54 @@ def red_blue(
         init, proposal = build_proposal(*args, **kwargs)
 
         def step(
-            state: State,
+            state: MoveState,
             random_key: random.KeyArray,
-            ensemble: Array,
-            log_prob: Array,
-        ) -> Tuple[Stats, Array, Array]:
+            ensemble: WalkerState,
+        ) -> Tuple[SamplerStats, WalkerState]:
             key1, key2 = random.split(random_key)
-            nwalkers, _ = ensemble.shape
+            nwalkers, _ = ensemble.coordinates.shape
             mid = nwalkers // 2
 
-            a = ensemble[:mid]
-            b = ensemble[mid:]
+            a = ensemble.coordinates[:mid]
+            b = ensemble.coordinates[mid:]
 
             def half_step(
-                key: random.KeyArray, s: Array, c: Array, lp: Array
-            ) -> Tuple[Array, Array, Array]:
+                key: random.KeyArray, s: Array, c: Array, det: Array, lp: Array
+            ) -> Tuple[Array, Array, Array, Array]:
                 key1, key2 = random.split(key)
                 q, f = proposal(key1, s, c)
-                nlp = log_prob_fn(q)
+                nlp, ndet = log_prob_fn(q)
                 diff = f + nlp - lp
                 accept = jnp.exp(diff) > random.uniform(key2, shape=lp.shape)
                 return (
                     accept,
                     jnp.where(accept[:, None], q, s),
+                    jnp.where(accept[:, None], det, ndet),
                     jnp.where(accept, nlp, lp),
                 )
 
-            acc1, a, lp1 = half_step(key1, a, b, log_prob[:mid])
-            acc2, b, lp2 = half_step(key2, b, a, log_prob[mid:])
+            acc1, a, det1, lp1 = half_step(
+                key1,
+                a,
+                b,
+                ensemble.deterministics[:mid],
+                ensemble.log_probability[:mid],
+            )
+            acc2, b, det2, lp2 = half_step(
+                key2,
+                b,
+                a,
+                ensemble.deterministics[mid:],
+                ensemble.log_probability[mid:],
+            )
 
             return (
                 {"accept": jnp.concatenate((acc1, acc2))},
-                jnp.concatenate((a, b)),
-                jnp.concatenate((lp1, lp2)),
+                WalkerState(
+                    coordinates=jnp.concatenate((a, b), axis=0),
+                    deterministics=jnp.concatenate((det1, det2), axis=0),
+                    log_probability=jnp.concatenate((lp1, lp2), axis=0),
+                ),
             )
 
         return init, step
