@@ -1,5 +1,5 @@
 from functools import partial, wraps
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import jax
 from jax import random
@@ -12,17 +12,24 @@ from emcee_jax.types import Array, LogProbFn, MoveFn, Stats, Walker
 def build_sampler(
     log_prob_fn: LogProbFn,
     *,
-    move: Optional[MoveFn] = None,
+    move: MoveFn = stretch,
     log_prob_args: Tuple[Any, ...] = (),
     log_prob_kwargs: Optional[Dict[str, Any]] = None,
-) -> Tuple[Walker, Stats]:
-    move = stretch if move is None else move
+) -> Callable[..., Tuple[Walker, Stats]]:
     log_prob_kwargs = {} if log_prob_kwargs is None else log_prob_kwargs
 
     @partial(jax.jit, static_argnames=["steps"])
     def sample(
-        random_key: random.KeyArray, ensemble: Walker, steps: int = 1000
-    ):
+        random_key: random.KeyArray,
+        ensemble: Union[Walker, Array],
+        steps: int = 1000,
+    ) -> Tuple[Walker, Stats]:
+        if not isinstance(ensemble, Walker):
+            ensemble = Walker(
+                coords=ensemble,
+                log_probability=jax.vmap(log_prob_fn)(ensemble),
+            )
+
         @jax.vmap
         @wraps(log_prob_fn)
         def wrapped_log_prob_fn(x: Array) -> Array:
