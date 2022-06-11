@@ -19,6 +19,12 @@ def test(session):
     _session_run(session, "tests")
 
 
+@nox.session(python=ALL_PYTHONS)
+def extras(session):
+    session.install(".[test,extras]")
+    _session_run(session, "tests")
+
+
 @nox.session
 def lint(session):
     session.install("pre-commit")

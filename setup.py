@@ -25,6 +25,7 @@ CLASSIFIERS = [
 INSTALL_REQUIRES = ["jax", "jaxlib"]
 EXTRA_REQUIRE = {
     "test": ["pytest"],
+    "extras": ["arviz"],
 }
 
 # END PROJECT SPECIFIC
