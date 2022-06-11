@@ -47,7 +47,7 @@ def wrap_python_log_prob_fn(
         return (
             host_callback.call(
                 lambda y: np.stack([eval_one(x) for x in y]),
-                params,
+                flat_params,
                 result_shape=result_shape,
             ),
             True,
