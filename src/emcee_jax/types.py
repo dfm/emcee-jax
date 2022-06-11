@@ -7,7 +7,7 @@ Array = Any
 Params = Union[PyTree, Array]
 Deterministics = Union[PyTree, Array]
 MoveState = Any
-SamplerStats = Dict[str, Any]
+SampleStats = Dict[str, Any]
 
 
 class WalkerState(NamedTuple):
@@ -20,15 +20,9 @@ UnravelFn = Callable[[Array], Params]
 
 InitFn = Callable[[Array], MoveState]
 StepFn = Callable[
-    [MoveState, KeyArray, WalkerState], Tuple[SamplerStats, WalkerState]
+    [MoveState, KeyArray, WalkerState], Tuple[SampleStats, WalkerState]
 ]
 MoveFn = Callable[..., Tuple[InitFn, StepFn]]
 
 LogProbFn = Callable[..., Array]
 WrappedLogProbFn = Callable[[Array], Array]
-
-
-class Trace(NamedTuple):
-    final_state: WalkerState
-    samples: WalkerState
-    sampler_stats: SamplerStats

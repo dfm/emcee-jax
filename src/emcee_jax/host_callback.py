@@ -1,14 +1,18 @@
 __all__ = ["wrap_python_log_prob_fn"]
 
 from functools import wraps
-from typing import Callable, List, Tuple
+from typing import Any, Callable, List, Tuple
 
 import jax
+import jax.numpy as jnp
 import numpy as np
+from jax._src import dtypes
 from jax.custom_batching import custom_vmap
 from jax.experimental import host_callback
+from jax.tree_util import tree_flatten
 
-from emcee_jax.types import Array, LogProbFn
+from emcee_jax.ravel_util import ravel_ensemble
+from emcee_jax.types import Array, LogProbFn, Params, PyTree
 
 
 def wrap_python_log_prob_fn(
@@ -16,26 +20,52 @@ def wrap_python_log_prob_fn(
 ) -> LogProbFn:
     @custom_vmap
     @wraps(python_log_prob_fn)
-    def log_prob_fn(params: Array) -> Array:
+    def log_prob_fn(params: Params) -> Array:
+        dtype = _tree_dtype(params)
         return host_callback.call(
             python_log_prob_fn,
             params,
-            result_shape=jax.ShapeDtypeStruct((), params.dtype),
+            result_shape=jax.ShapeDtypeStruct((), dtype),
         )
 
     @log_prob_fn.def_vmap
     def _(
         axis_size: int, in_batched: List[bool], params: Array
     ) -> Tuple[Array, bool]:
-        assert in_batched[0]
-        assert axis_size == params.shape[0]
+        del axis_size, in_batched
+
+        if _arraylike(params):
+            flat_params = params
+            eval_one = python_log_prob_fn
+        else:
+            flat_params, unravel = ravel_ensemble(params)
+            eval_one = lambda x: python_log_prob_fn(unravel(x))
+
+        result_shape = jax.ShapeDtypeStruct(
+            (flat_params.shape[0],), flat_params.dtype
+        )
         return (
             host_callback.call(
-                lambda x: np.stack([python_log_prob_fn(y) for y in x]),
+                lambda y: np.stack([eval_one(x) for x in y]),
                 params,
-                result_shape=jax.ShapeDtypeStruct((axis_size,), params.dtype),
+                result_shape=result_shape,
             ),
             True,
         )
 
     return log_prob_fn
+
+
+def _tree_dtype(tree: PyTree) -> Any:
+    leaves, _ = tree_flatten(tree)
+    from_dtypes = [dtypes.dtype(l) for l in leaves]
+    return dtypes.result_type(*from_dtypes)
+
+
+def _arraylike(x: Array) -> bool:
+    return (
+        isinstance(x, np.ndarray)
+        or isinstance(x, jnp.ndarray)
+        or hasattr(x, "__jax_array__")
+        or np.isscalar(x)
+    )

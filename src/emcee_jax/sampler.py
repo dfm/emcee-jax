@@ -10,13 +10,13 @@ from jax.flatten_util import ravel_pytree
 
 from emcee_jax.moves import stretch
 from emcee_jax.ravel_util import ravel_ensemble
+from emcee_jax.trace import Trace
 from emcee_jax.types import (
     Array,
     Deterministics,
     LogProbFn,
     MoveFn,
-    SamplerStats,
-    Trace,
+    SampleStats,
     WalkerState,
 )
 
@@ -24,10 +24,11 @@ from emcee_jax.types import (
 def build_sampler(
     log_prob_fn: LogProbFn,
     *,
-    move: MoveFn = stretch,
+    move: Optional[MoveFn] = None,
     log_prob_args: Tuple[Any, ...] = (),
     log_prob_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Callable[..., Trace]:
+    move_fn = stretch() if move is None else move
     log_prob_kwargs = {} if log_prob_kwargs is None else log_prob_kwargs
     wrapped_log_prob_fn = lu.wrap_init(
         partial(log_prob_fn, *log_prob_args, **log_prob_kwargs)
@@ -84,17 +85,17 @@ def build_sampler(
         )
 
         # Initialize the move function
-        init, step = move(flat_log_prob_fn)
+        init, step = move_fn(flat_log_prob_fn)
         state = init(coordinates)
 
         def wrapped_step(
             previous_ensemble: WalkerState, key: random.KeyArray
-        ) -> Tuple[WalkerState, Tuple[SamplerStats, WalkerState]]:
+        ) -> Tuple[WalkerState, Tuple[SampleStats, WalkerState]]:
             stats, next_ensemble = step(state, key, previous_ensemble)
             return next_ensemble, (stats, next_ensemble)
 
         # Run the sampler
-        final_ensemble, (sampler_stats, samples) = jax.lax.scan(
+        final_ensemble, (sample_stats, samples) = jax.lax.scan(
             wrapped_step, initial_ensemble, random.split(random_key, steps)
         )
 
@@ -122,7 +123,7 @@ def build_sampler(
         return Trace(
             final_state=final_ensemble,
             samples=samples,
-            sampler_stats=sampler_stats,
+            sample_stats=sample_stats,
         )
 
     return sample
