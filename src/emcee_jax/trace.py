@@ -34,7 +34,7 @@ def trace_to_inference_data(trace: Trace, **kwargs: Any) -> "InferenceData":
     # Deterministics also live in samples
     deterministics = trace.samples.deterministics
     if deterministics is not None:
-        if not isinstance(samples, dict):
+        if not isinstance(deterministics, dict):
             flat, _ = tree_flatten(deterministics)
             deterministics = {f"det_{n}": x for n, x in enumerate(flat)}
         for k in list(deterministics.keys()):

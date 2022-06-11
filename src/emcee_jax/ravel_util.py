@@ -7,7 +7,7 @@ in an ensemble.
 __all__ = ["ravel_ensemble"]
 
 import warnings
-from typing import List, Tuple
+from typing import Callable, List, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -17,12 +17,14 @@ from jax._src import dtypes
 from jax._src.util import safe_zip
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from emcee_jax.types import Array, Params, UnravelFn
+from emcee_jax.types import Array, PyTree
+
+UnravelFn = Callable[[Array], PyTree]
 
 zip = safe_zip
 
 
-def ravel_ensemble(coords: Params) -> Tuple[Array, UnravelFn]:
+def ravel_ensemble(coords: PyTree) -> Tuple[Array, UnravelFn]:
     leaves, treedef = tree_flatten(coords)
     flat, unravel_inner = _ravel_inner(leaves)
     unravel_one = lambda flat: tree_unflatten(treedef, unravel_inner(flat))
@@ -40,7 +42,7 @@ def _ravel_inner(lst: List[Array]) -> Tuple[Array, UnravelFn]:
     if all(dt == to_dtype for dt in from_dtypes):
         del from_dtypes, to_dtype
 
-        def unravel(arr: Array) -> Params:
+        def unravel(arr: Array) -> PyTree:
             chunks = jnp.split(arr, indices[:-1])
             return [
                 chunk.reshape(shape) for chunk, shape in zip(chunks, shapes)
@@ -52,7 +54,7 @@ def _ravel_inner(lst: List[Array]) -> Tuple[Array, UnravelFn]:
 
     else:
 
-        def unravel(arr: Array) -> Params:
+        def unravel(arr: Array) -> PyTree:
             arr_dtype = dtypes.dtype(arr)
             if arr_dtype != to_dtype:
                 raise TypeError(

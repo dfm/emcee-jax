@@ -8,14 +8,14 @@ import jax.linear_util as lu
 from jax import random
 from jax.flatten_util import ravel_pytree
 
-from emcee_jax.moves import stretch
+from emcee_jax.moves import Move, StepState, Stretch
 from emcee_jax.ravel_util import ravel_ensemble
 from emcee_jax.trace import Trace
 from emcee_jax.types import (
     Array,
-    Deterministics,
+    FlatWalkerState,
     LogProbFn,
-    MoveFn,
+    PyTree,
     SampleStats,
     WalkerState,
 )
@@ -24,11 +24,11 @@ from emcee_jax.types import (
 def build_sampler(
     log_prob_fn: LogProbFn,
     *,
-    move: Optional[MoveFn] = None,
+    move: Optional[Move] = None,
     log_prob_args: Tuple[Any, ...] = (),
     log_prob_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Callable[..., Trace]:
-    move_fn = stretch() if move is None else move
+    move = Stretch() if move is None else move
     log_prob_kwargs = {} if log_prob_kwargs is None else log_prob_kwargs
     wrapped_log_prob_fn = lu.wrap_init(
         partial(log_prob_fn, *log_prob_args, **log_prob_kwargs)
@@ -42,7 +42,9 @@ def build_sampler(
         steps: int = 1000,
     ) -> Trace:
         # Handle cases when either an ensemble or array is passed as input
-        if not isinstance(ensemble, WalkerState):
+        is_state = isinstance(ensemble, WalkerState)
+        is_state = is_state or isinstance(ensemble, FlatWalkerState)
+        if not is_state:
             coordinates = ensemble
             log_probability, deterministics = jax.vmap(
                 wrapped_log_prob_fn.call_wrapped
@@ -78,25 +80,26 @@ def build_sampler(
         ).call_wrapped
 
         # Set up a flattened version of the ensemble state
-        initial_ensemble = WalkerState(
+        initial_ensemble = FlatWalkerState(
             coordinates=coordinates,
             deterministics=deterministics,
             log_probability=log_probability,
         )
 
         # Initialize the move function
-        init, step = move_fn(flat_log_prob_fn)
-        state = init(coordinates)
+        assert move is not None
+        initial_carry = move.init(flat_log_prob_fn, initial_ensemble)
+        step = partial(move.step, flat_log_prob_fn)
 
         def wrapped_step(
-            previous_ensemble: WalkerState, key: random.KeyArray
-        ) -> Tuple[WalkerState, Tuple[SampleStats, WalkerState]]:
-            stats, next_ensemble = step(state, key, previous_ensemble)
-            return next_ensemble, (stats, next_ensemble)
+            carry: StepState, key: random.KeyArray
+        ) -> Tuple[StepState, Tuple[StepState, SampleStats]]:
+            carry, stats = step(key, carry)
+            return carry, (carry, stats)
 
         # Run the sampler
-        final_ensemble, (sample_stats, samples) = jax.lax.scan(
-            wrapped_step, initial_ensemble, random.split(random_key, steps)
+        (_, final_ensemble), ((_, samples), sample_stats) = jax.lax.scan(
+            wrapped_step, initial_carry, random.split(random_key, steps)
         )
 
         # Unravel the final state to have the correct structure
@@ -150,8 +153,8 @@ def handle_deterministics(
 def flatten_log_prob_fn(
     unravel: Callable[[Array], Array], x: Array
 ) -> Generator[
-    Tuple[Array, Union[Deterministics, Dict[str, Any]]],
-    Tuple[Array, Union[Deterministics, Dict[str, Any]]],
+    Tuple[Array, Union[PyTree, Dict[str, Any]]],
+    Tuple[Array, Union[PyTree, Dict[str, Any]]],
     None,
 ]:
     x_flat = unravel(x)

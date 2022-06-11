@@ -1,28 +1,26 @@
-from typing import Any, Callable, Dict, NamedTuple, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Union
 
-from jax.random import KeyArray
+import jax.numpy as jnp
+import numpy as np
 
-PyTree = Any
 Array = Any
-Params = Union[PyTree, Array]
-Deterministics = Union[PyTree, Array]
-MoveState = Any
-SampleStats = Dict[str, Any]
+PyTree = Union[Array, Iterable[Array], Dict[Any, Array]]
+SampleStats = Dict[str, Array]
 
 
 class WalkerState(NamedTuple):
-    coordinates: Params
-    deterministics: Deterministics
+    coordinates: PyTree
+    deterministics: PyTree
     log_probability: Array
+    augments: Optional[PyTree] = None
 
 
-UnravelFn = Callable[[Array], Params]
+class FlatWalkerState(NamedTuple):
+    coordinates: Array
+    deterministics: Array
+    log_probability: Array
+    augments: Optional[PyTree] = None
 
-InitFn = Callable[[Array], MoveState]
-StepFn = Callable[
-    [MoveState, KeyArray, WalkerState], Tuple[SampleStats, WalkerState]
-]
-MoveFn = Callable[..., Tuple[InitFn, StepFn]]
 
 LogProbFn = Callable[..., Array]
 WrappedLogProbFn = Callable[[Array], Array]

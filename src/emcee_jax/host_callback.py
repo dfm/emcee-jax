@@ -12,7 +12,7 @@ from jax.experimental import host_callback
 from jax.tree_util import tree_flatten
 
 from emcee_jax.ravel_util import ravel_ensemble
-from emcee_jax.types import Array, LogProbFn, Params, PyTree
+from emcee_jax.types import Array, LogProbFn, PyTree
 
 
 def wrap_python_log_prob_fn(
@@ -20,7 +20,7 @@ def wrap_python_log_prob_fn(
 ) -> LogProbFn:
     @custom_vmap
     @wraps(python_log_prob_fn)
-    def log_prob_fn(params: Params) -> Array:
+    def log_prob_fn(params: Array) -> Array:
         dtype = _tree_dtype(params)
         return host_callback.call(
             python_log_prob_fn,
