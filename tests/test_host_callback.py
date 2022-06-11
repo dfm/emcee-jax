@@ -14,7 +14,7 @@ def test_host_callback_vmap(seed=0):
     expected = jnp.stack([func(row) for row in arg])
     computed = jax.vmap(func)(arg)
 
-    np.testing.assert_allclose(computed, expected)
+    np.testing.assert_allclose(computed, expected, rtol=1e-6)
 
 
 def test_host_callback_vmap_pytree(seed=0):
@@ -31,4 +31,4 @@ def test_host_callback_vmap_pytree(seed=0):
     expected = jax.vmap(func_jax)(arg)
     computed = jax.vmap(func_py)(arg)
 
-    np.testing.assert_allclose(computed, expected)
+    np.testing.assert_allclose(computed, expected, rtol=1e-6)
