@@ -40,8 +40,9 @@ def build_sampler(
         random_key: random.KeyArray,
         ensemble: Union[WalkerState, Array],
         steps: int = 1000,
+        tune: Optional[int] = None,
     ) -> Trace:
-        init_key, sample_key = jax.random.split(random_key)
+        init_key, tune_key, sample_key = jax.random.split(random_key, 3)
 
         # Handle cases when either an ensemble or array is passed as input
         is_state = isinstance(ensemble, WalkerState)
@@ -91,12 +92,26 @@ def build_sampler(
         # Initialize the move function
         assert move is not None
         initial_carry = move.init(flat_log_prob_fn, init_key, initial_ensemble)
-        step = partial(move.step, flat_log_prob_fn)
+
+        if tune is not None:
+
+            def tune_step(
+                carry: StepState, key: random.KeyArray
+            ) -> Tuple[StepState, Tuple[StepState, SampleStats]]:
+                assert move is not None
+                carry, stats = move.step(flat_log_prob_fn, key, carry)
+                return carry, (carry, stats)
+
+            # Run the sampler
+            initial_carry, _ = jax.lax.scan(
+                tune_step, initial_carry, random.split(tune_key, steps)
+            )
 
         def wrapped_step(
             carry: StepState, key: random.KeyArray
         ) -> Tuple[StepState, Tuple[StepState, SampleStats]]:
-            carry, stats = step(key, carry)
+            assert move is not None
+            carry, stats = move.step(flat_log_prob_fn, key, carry)
             return carry, (carry, stats)
 
         # Run the sampler

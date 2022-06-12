@@ -1,18 +1,30 @@
+__all__ = ["HMC", "RandomizedTrajectoryHMC"]
+
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, NamedTuple, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    NamedTuple,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import jax
+import jax.linear_util as lu
 import jax.numpy as jnp
-import numpy as np
+import jax.scipy as jsp
 from jax import random
 from jax.tree_util import tree_map
 
 from emcee_jax.moves.core import MoveState, RedBlue, StepState
-from emcee_jax.moves.util import apply_accept
 from emcee_jax.types import (
     Array,
     FlatWalkerState,
+    PyTree,
     SampleStats,
     WrappedLogProbFn,
 )
@@ -49,7 +61,6 @@ def hmc(
     log_prob_and_grad_fn: WrappedLogProbFn,
     random_key: random.KeyArray,
     state: HMCState,
-    *,
     step_size: Array,
     num_steps: Array,
 ) -> Tuple[HMCState, SampleStats]:
@@ -94,6 +105,9 @@ def mh_accept(
 class HMC(RedBlue):
     step_size: Array = 0.1
     num_steps: Array = 50
+    max_step_size: Optional[Array] = None
+    max_num_steps: Optional[Array] = None
+    precondition: bool = False
 
     def init(
         self,
@@ -110,6 +124,28 @@ class HMC(RedBlue):
         ensemble = ensemble._replace(augments=augments)
         return StepState(move_state={"iteration": 0}, walker_state=ensemble)
 
+    def get_step_size(self, key: random.KeyArray) -> Array:
+        if self.max_step_size is None:
+            return self.step_size
+        return jnp.exp(
+            random.uniform(
+                key,
+                minval=jnp.log(self.step_size),
+                maxval=jnp.log(self.max_step_size),
+            )
+        )
+
+    def get_num_steps(self, key: random.KeyArray) -> Array:
+        if self.max_num_steps is None:
+            return jnp.asarray(self.num_steps, dtype=int)
+        return jnp.floor(
+            random.uniform(
+                key,
+                minval=self.num_steps,
+                maxval=self.max_num_steps + 1,
+            )
+        ).astype(int)
+
     def propose(
         self,
         log_prob_fn: WrappedLogProbFn,
@@ -122,26 +158,65 @@ class HMC(RedBlue):
         assert target.augments is not None
         assert complementary.augments is not None
 
+        if self.precondition:
+            cov = jnp.cov(complementary.coordinates, rowvar=0)
+            ell = jnp.linalg.cholesky(cov)
+            condition = partial(jsp.linalg.solve_triangular, ell, lower=True)
+            coords = jax.vmap(condition)(target.coordinates)
+            uncondition = lambda x: ell @ x
+            wrapped_log_prob_fn = precondition_log_prob_fn(
+                lu.wrap_init(log_prob_fn), uncondition
+            ).call_wrapped
+        else:
+            coords = target.coordinates
+            wrapped_log_prob_fn = log_prob_fn
+
+        num_target = target.coordinates.shape[0]
+        step_size_key, num_steps_key, step_key = random.split(key, 3)
+
         init = HMCState(
-            coordinates=target.coordinates,
+            coordinates=coords,
             momenta=target.augments["momenta"],
             log_probability=target.log_probability,
             grad_log_probability=target.augments["grad_log_probability"],
             deterministics=target.deterministics,
         )
-        step = jax.vmap(
-            partial(
-                hmc,
-                jax.value_and_grad(log_prob_fn, has_aux=True),
-                step_size=self.step_size,
-                num_steps=self.num_steps,
+
+        step_size = self.get_step_size(step_size_key)
+        num_steps = self.get_num_steps(num_steps_key)
+        if jnp.ndim(step_size) >= 1 or jnp.ndim(num_steps) >= 1:
+            step_size = jnp.broadcast_to(step_size, num_target)
+            num_steps = jnp.broadcast_to(step_size, num_target)
+            step = jax.vmap(
+                partial(
+                    hmc, jax.value_and_grad(wrapped_log_prob_fn, has_aux=True)
+                )
             )
-        )
-        result, stats = step(
-            random.split(key, target.coordinates.shape[0]), init
-        )
+            result, stats = step(
+                random.split(step_key, num_target), init, step_size, num_steps
+            )
+
+        else:
+            step = jax.vmap(
+                partial(
+                    hmc,
+                    jax.value_and_grad(wrapped_log_prob_fn, has_aux=True),
+                    step_size=step_size,
+                    num_steps=num_steps,
+                )
+            )
+            result, stats = step(random.split(step_key, num_target), init)
+
+            step_size = jnp.broadcast_to(step_size, num_target)
+            num_steps = jnp.broadcast_to(step_size, num_target)
+
+        if self.precondition:
+            coords = jax.vmap(uncondition)(result.coordinates)
+        else:
+            coords = result.coordinates
+
         updated = target._replace(
-            coordinates=result.coordinates,
+            coordinates=coords,
             deterministics=result.deterministics,
             log_probability=result.log_probability,
             augments={
@@ -152,8 +227,20 @@ class HMC(RedBlue):
         return (
             dict(move_state, iteration=move_state.pop("iteration") + 1),
             updated,
-            stats,
+            dict(stats, step_size=step_size, num_steps=num_steps),
         )
+
+
+@lu.transformation
+def precondition_log_prob_fn(
+    uncondition: Callable[[Array], Array], x: Array
+) -> Generator[
+    Tuple[Array, Union[PyTree, Dict[str, Any]]],
+    Tuple[Array, Union[PyTree, Dict[str, Any]]],
+    None,
+]:
+    result = yield (uncondition(x),), {}
+    yield result
 
 
 # def persistent_ghmc(
