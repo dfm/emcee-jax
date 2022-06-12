@@ -8,7 +8,7 @@ import jax.linear_util as lu
 from jax import random
 from jax.flatten_util import ravel_pytree
 
-from emcee_jax.moves import Move, StepState, Stretch
+from emcee_jax.moves.core import Move, StepState, Stretch
 from emcee_jax.ravel_util import ravel_ensemble
 from emcee_jax.trace import Trace
 from emcee_jax.types import (
@@ -41,6 +41,8 @@ def build_sampler(
         ensemble: Union[WalkerState, Array],
         steps: int = 1000,
     ) -> Trace:
+        init_key, sample_key = jax.random.split(random_key)
+
         # Handle cases when either an ensemble or array is passed as input
         is_state = isinstance(ensemble, WalkerState)
         is_state = is_state or isinstance(ensemble, FlatWalkerState)
@@ -88,7 +90,7 @@ def build_sampler(
 
         # Initialize the move function
         assert move is not None
-        initial_carry = move.init(flat_log_prob_fn, initial_ensemble)
+        initial_carry = move.init(flat_log_prob_fn, init_key, initial_ensemble)
         step = partial(move.step, flat_log_prob_fn)
 
         def wrapped_step(
@@ -98,30 +100,30 @@ def build_sampler(
             return carry, (carry, stats)
 
         # Run the sampler
-        (_, final_ensemble), ((_, samples), sample_stats) = jax.lax.scan(
-            wrapped_step, initial_carry, random.split(random_key, steps)
+        (_, flat_ensemble), ((_, flat_samples), sample_stats) = jax.lax.scan(
+            wrapped_step, initial_carry, random.split(sample_key, steps)
         )
 
         # Unravel the final state to have the correct structure
         unravel_coordinates = jax.vmap(unravel_coordinates)
         unravel_deterministics = jax.vmap(unravel_deterministics)
-        coordinates = unravel_coordinates(final_ensemble.coordinates)
-        deterministics = unravel_deterministics(final_ensemble.deterministics)
+        coordinates = unravel_coordinates(flat_ensemble.coordinates)
+        deterministics = unravel_deterministics(flat_ensemble.deterministics)
         final_ensemble = WalkerState(
             coordinates=coordinates,
             deterministics=deterministics,
-            log_probability=final_ensemble.log_probability,
+            log_probability=flat_ensemble.log_probability,
         )
 
         # Unravel the chain to have the correct structure
-        coordinates = jax.vmap(unravel_coordinates)(samples.coordinates)
+        coordinates = jax.vmap(unravel_coordinates)(flat_samples.coordinates)
         deterministics = jax.vmap(unravel_deterministics)(
-            samples.deterministics
+            flat_samples.deterministics
         )
         samples = WalkerState(
             coordinates=coordinates,
             deterministics=deterministics,
-            log_probability=samples.log_probability,
+            log_probability=flat_samples.log_probability,
         )
         return Trace(
             final_state=final_ensemble,

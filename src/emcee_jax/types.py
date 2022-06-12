@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 
 Array = Any
-PyTree = Union[Array, Iterable[Array], Dict[Any, Array]]
+PyTree = Union[Array, Iterable[Array], Dict[Any, Array], NamedTuple]
 SampleStats = Dict[str, Array]
 
 
@@ -19,7 +19,7 @@ class FlatWalkerState(NamedTuple):
     coordinates: Array
     deterministics: Array
     log_probability: Array
-    augments: Optional[PyTree] = None
+    augments: Optional[dict[Any, Array]] = None
 
 
 LogProbFn = Callable[..., Array]
