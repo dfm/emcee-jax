@@ -1,4 +1,4 @@
-__all__ = ["HMC", "RandomizedTrajectoryHMC"]
+__all__ = ["HMC"]
 
 from dataclasses import dataclass
 from functools import partial
