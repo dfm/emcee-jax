@@ -29,3 +29,9 @@ def extras(session):
 def lint(session):
     session.install("pre-commit")
     session.run("pre-commit", "run", "--all-files", *session.posargs)
+
+
+@nox.session(python=ALL_PYTHONS)
+def doctest(session):
+    session.install(".")
+    session.run("python", "-m", "doctest", "README.md", *session.posargs)

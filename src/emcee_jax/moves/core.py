@@ -10,6 +10,7 @@ import numpy as np
 from jax import random
 from jax.tree_util import tree_map
 
+from emcee_jax.moves.util import apply_accept
 from emcee_jax.types import (
     Array,
     FlatWalkerState,
@@ -27,7 +28,10 @@ class StepState(NamedTuple):
 
 class Move:
     def init(
-        self, log_prob_fn: WrappedLogProbFn, ensemble: FlatWalkerState
+        self,
+        log_prob_fn: WrappedLogProbFn,
+        random_key: random.KeyArray,
+        ensemble: FlatWalkerState,
     ) -> StepState:
         return StepState(move_state=None, walker_state=ensemble)
 
@@ -48,7 +52,7 @@ class RedBlue(Move):
         key: random.KeyArray,
         target: FlatWalkerState,
         complementary: FlatWalkerState,
-    ) -> Tuple[MoveState, FlatWalkerState, Array, SampleStats]:
+    ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
         raise NotImplementedError
 
     def step(
@@ -70,30 +74,16 @@ class RedBlue(Move):
             key: random.KeyArray,
             target: FlatWalkerState,
             complementary: FlatWalkerState,
-        ) -> Tuple[MoveState, Array, FlatWalkerState, SampleStats]:
-            key1, key2 = random.split(key)
-            new_state, new_target, factor, stats = self.propose(
-                log_prob_fn, current_state, key1, target, complementary
+        ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
+            new_state, new_target, stats = self.propose(
+                log_prob_fn, current_state, key, target, complementary
             )
-            diff = new_target.log_probability - target.log_probability
-            diff += factor
-            accept_prob = stats["accept_prob"] = jnp.exp(diff)
-            accept = stats["accept"] = accept_prob > random.uniform(
-                key2, shape=diff.shape
-            )
-            return (new_state, accept, new_target, stats)
+            return (new_state, new_target, stats)
 
-        move_state, acc1, prop, stats1 = half_step(
-            move_state, key1, half1, half2
-        )
-        half1 = apply_accept(acc1, half1, prop)
-        move_state, acc2, prop, stats2 = half_step(
-            move_state, key2, half2, half1
-        )
-        half2 = apply_accept(acc2, half2, prop)
+        move_state, half1, stats1 = half_step(move_state, key1, half1, half2)
+        move_state, half2, stats2 = half_step(move_state, key2, half2, half1)
         stats = tree_map(lambda *x: jnp.concatenate(x, axis=0), stats1, stats2)
         updated = tree_map(lambda *x: jnp.concatenate(x, axis=0), half1, half2)
-
         return StepState(move_state=move_state, walker_state=updated), stats
 
 
@@ -110,18 +100,28 @@ class SimpleRedBlue(RedBlue):
         key: random.KeyArray,
         target: FlatWalkerState,
         complementary: FlatWalkerState,
-    ) -> Tuple[MoveState, FlatWalkerState, Array, SampleStats]:
+    ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
+        key1, key2 = random.split(key)
         q, f = self.propose_simple(
-            key, target.coordinates, complementary.coordinates
+            key1, target.coordinates, complementary.coordinates
         )
         nlp, ndet = jax.vmap(log_prob_fn)(q)
         updated = FlatWalkerState(
             coordinates=q,
             deterministics=ndet,
             log_probability=nlp,
-            augments=target.augments,
+            extras=target.extras,
         )
-        return state, updated, f, {}
+
+        diff = nlp - target.log_probability + f
+        accept_prob = jnp.exp(diff)
+        accept = accept_prob > random.uniform(key2, shape=diff.shape)
+        updated = apply_accept(accept, target, updated)
+        return (
+            state,
+            updated,
+            {"accept": accept, "accept_prob": accept_prob},
+        )
 
 
 @dataclass(frozen=True)
@@ -149,7 +149,7 @@ class DiffEvol(SimpleRedBlue):
         self, key: random.KeyArray, s: Array, c: Array
     ) -> Tuple[Array, Array]:
         ns, ndim = s.shape
-        key1, key2 = jax.random.split(key)
+        key1, key2 = random.split(key)
 
         # This is a magic formula from the paper
         gamma0 = 2.38 / np.sqrt(2 * ndim) if self.gamma is None else self.gamma
@@ -157,20 +157,12 @@ class DiffEvol(SimpleRedBlue):
         # These two slightly complicated lines are just to select two helper
         # walkers per target walker _without replacement_. This means that we'll
         # always get two different complementary walkers per target walker.
-        choose2 = partial(jax.random.choice, a=c, replace=False, shape=(2,))
-        helpers = jax.vmap(choose2)(jax.random.split(key1, ns))
+        choose2 = partial(random.choice, a=c, replace=False, shape=(2,))
+        helpers = jax.vmap(choose2)(random.split(key1, ns))
 
         # Use the vector between helper walkers to update the target walker
         delta = jnp.squeeze(jnp.diff(helpers, axis=1))
-        norm = jax.random.normal(key2, shape=(ns,))
+        norm = random.normal(key2, shape=(ns,))
         delta = (gamma0 + self.sigma * norm[:, None]) * delta
 
         return s + delta, jnp.zeros(ns)
-
-
-def apply_accept(
-    accept: Array, target: FlatWalkerState, other: FlatWalkerState
-) -> FlatWalkerState:
-    accepter = jax.vmap(lambda a, x, y: jnp.where(a, y, x))
-    accepter = partial(accepter, accept)
-    return tree_map(accepter, target, other)
