@@ -99,7 +99,9 @@ def build_sampler(
                 carry: StepState, key: random.KeyArray
             ) -> Tuple[StepState, Tuple[StepState, SampleStats]]:
                 assert move is not None
-                carry, stats = move.step(flat_log_prob_fn, key, carry)
+                carry, stats = move.step(
+                    flat_log_prob_fn, key, carry, tune=True
+                )
                 return carry, (carry, stats)
 
             # Run the sampler

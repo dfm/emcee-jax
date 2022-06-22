@@ -153,6 +153,8 @@ class HMC(RedBlue):
         key: random.KeyArray,
         target: FlatWalkerState,
         complementary: FlatWalkerState,
+        *,
+        tune: bool,
     ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
         assert move_state is not None
         assert target.extras is not None

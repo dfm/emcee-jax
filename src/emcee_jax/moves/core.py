@@ -40,6 +40,8 @@ class Move:
         log_prob_fn: WrappedLogProbFn,
         random_key: random.KeyArray,
         state: StepState,
+        *,
+        tune: bool = False,
     ) -> Tuple[StepState, SampleStats]:
         raise NotImplementedError
 
@@ -52,6 +54,8 @@ class RedBlue(Move):
         key: random.KeyArray,
         target: FlatWalkerState,
         complementary: FlatWalkerState,
+        *,
+        tune: bool,
     ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
         raise NotImplementedError
 
@@ -60,6 +64,8 @@ class RedBlue(Move):
         log_prob_fn: WrappedLogProbFn,
         random_key: random.KeyArray,
         state: StepState,
+        *,
+        tune: bool = False,
     ) -> Tuple[StepState, SampleStats]:
         move_state, ensemble = state
         key1, key2 = random.split(random_key)
@@ -76,7 +82,12 @@ class RedBlue(Move):
             complementary: FlatWalkerState,
         ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
             new_state, new_target, stats = self.propose(
-                log_prob_fn, current_state, key, target, complementary
+                log_prob_fn,
+                current_state,
+                key,
+                target,
+                complementary,
+                tune=tune,
             )
             return (new_state, new_target, stats)
 
@@ -100,6 +111,8 @@ class SimpleRedBlue(RedBlue):
         key: random.KeyArray,
         target: FlatWalkerState,
         complementary: FlatWalkerState,
+        *,
+        tune: bool,
     ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
         key1, key2 = random.split(key)
         q, f = self.propose_simple(

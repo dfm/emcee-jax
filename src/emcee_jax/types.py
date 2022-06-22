@@ -1,7 +1,13 @@
-from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Union
-
-import jax.numpy as jnp
-import numpy as np
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    NamedTuple,
+    Optional,
+    Tuple,
+    Union,
+)
 
 Array = Any
 PyTree = Union[Array, Iterable[Array], Dict[Any, Array], NamedTuple]
@@ -22,5 +28,5 @@ class FlatWalkerState(NamedTuple):
     extras: Optional[dict[Any, Array]] = None
 
 
-LogProbFn = Callable[..., Array]
-WrappedLogProbFn = Callable[[Array], Array]
+LogProbFn = Callable[..., Union[Array, Tuple[Array, PyTree]]]
+WrappedLogProbFn = Callable[[Array], Tuple[Array, Array]]
