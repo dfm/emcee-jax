@@ -12,14 +12,14 @@ class WalkerState(NamedTuple):
     coordinates: PyTree
     deterministics: PyTree
     log_probability: Array
-    augments: Optional[PyTree] = None
+    extras: Optional[PyTree] = None
 
 
 class FlatWalkerState(NamedTuple):
     coordinates: Array
     deterministics: Array
     log_probability: Array
-    augments: Optional[dict[Any, Array]] = None
+    extras: Optional[dict[Any, Array]] = None
 
 
 LogProbFn = Callable[..., Array]

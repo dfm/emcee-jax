@@ -110,7 +110,7 @@ class SimpleRedBlue(RedBlue):
             coordinates=q,
             deterministics=ndet,
             log_probability=nlp,
-            augments=target.augments,
+            extras=target.extras,
         )
 
         diff = nlp - target.log_probability + f

@@ -115,13 +115,13 @@ class HMC(RedBlue):
         key: random.KeyArray,
         ensemble: FlatWalkerState,
     ) -> StepState:
-        augments = {} if ensemble.augments is None else ensemble.augments
-        augments["momenta"] = random.normal(key, ensemble.coordinates.shape)
+        extras = {} if ensemble.extras is None else ensemble.extras
+        extras["momenta"] = random.normal(key, ensemble.coordinates.shape)
         dlogp, _ = jax.vmap(jax.grad(log_prob_fn, has_aux=True))(
             ensemble.coordinates
         )
-        augments["grad_log_probability"] = dlogp
-        ensemble = ensemble._replace(augments=augments)
+        extras["grad_log_probability"] = dlogp
+        ensemble = ensemble._replace(extras=extras)
         return StepState(move_state={"iteration": 0}, walker_state=ensemble)
 
     def get_step_size(self, key: random.KeyArray) -> Array:
@@ -155,8 +155,8 @@ class HMC(RedBlue):
         complementary: FlatWalkerState,
     ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
         assert move_state is not None
-        assert target.augments is not None
-        assert complementary.augments is not None
+        assert target.extras is not None
+        assert complementary.extras is not None
 
         if self.precondition:
             cov = jnp.cov(complementary.coordinates, rowvar=0)
@@ -176,9 +176,9 @@ class HMC(RedBlue):
 
         init = HMCState(
             coordinates=coords,
-            momenta=target.augments["momenta"],
+            momenta=target.extras["momenta"],
             log_probability=target.log_probability,
-            grad_log_probability=target.augments["grad_log_probability"],
+            grad_log_probability=target.extras["grad_log_probability"],
             deterministics=target.deterministics,
         )
 
@@ -219,7 +219,7 @@ class HMC(RedBlue):
             coordinates=coords,
             deterministics=result.deterministics,
             log_probability=result.log_probability,
-            augments={
+            extras={
                 "momenta": result.momenta,
                 "grad_log_probability": result.grad_log_probability,
             },
