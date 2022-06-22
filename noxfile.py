@@ -31,7 +31,7 @@ def lint(session):
     session.run("pre-commit", "run", "--all-files", *session.posargs)
 
 
-@nox.session
+@nox.session(python=ALL_PYTHONS)
 def doctest(session):
     session.install(".")
     session.run("python", "-m", "doctest", "README.md", *session.posargs)
