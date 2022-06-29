@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union
 
 import jax
 import jax.linear_util as lu
+import jax.numpy as jnp
 from jax import random
 from jax.flatten_util import ravel_pytree
 
@@ -33,7 +34,7 @@ def build_sampler(
     wrapped_log_prob_fn = lu.wrap_init(
         partial(log_prob_fn, *log_prob_args, **log_prob_kwargs)
     )
-    wrapped_log_prob_fn = handle_deterministics(wrapped_log_prob_fn)
+    wrapped_log_prob_fn = handle_deterministics_and_nans(wrapped_log_prob_fn)
 
     @partial(jax.jit, static_argnames=["steps"])
     def sample(
@@ -64,11 +65,6 @@ def build_sampler(
         # Deal with the case where deterministics are not provided
         deterministics = deterministics.reshape((coordinates.shape[0], -1))
 
-        if log_probability is None:
-            raise ValueError(
-                "The initial log_probability is None, but it must be a scalar "
-                "for each walker"
-            )
         if log_probability.shape != coordinates.shape[:1]:
             raise ValueError(
                 "Invalid shape for initial log_probability: expected "
@@ -152,11 +148,12 @@ def build_sampler(
 
 
 @lu.transformation
-def handle_deterministics(
+def handle_deterministics_and_nans(
     *args: Any, **kwargs: Any
 ) -> Generator[Tuple[Any, Any], Union[Any, Tuple[Any, Any]], None]:
     result = yield args, kwargs
 
+    # Unwrap deterministics if they are provided or default to None
     if isinstance(result, tuple):
         log_prob, *deterministics = result
         if len(deterministics) == 1:
@@ -164,6 +161,22 @@ def handle_deterministics(
     else:
         log_prob = result
         deterministics = None
+
+    if log_prob is None:
+        raise ValueError(
+            "A log probability function must return a scalar value, got None"
+        )
+    if log_prob.shape != ():
+        raise ValueError(
+            "A log probability function must return a scalar; "
+            f"computed shape is '{log_prob.shape}', expected '()'"
+        )
+
+    # Handle the case where the computed log probability is NaN by replacing it
+    # with negative infinity so that it gets rejected
+    log_prob = jax.lax.cond(
+        jnp.isnan(log_prob), lambda: -jnp.inf, lambda: log_prob
+    )
 
     yield log_prob, deterministics
 

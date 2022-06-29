@@ -22,9 +22,11 @@ from emcee_jax.types import (
 
 @dataclass(frozen=True)
 class Slice(RedBlue):
-    max_doubles: int = 100
+    max_doubles: int = 10_000
     max_shrinks: int = 100
-    initial_step_size: float = 0.1
+    initial_step_size: float = 1.0
+    tune_max_doubles: Optional[int] = None
+    tune_max_shrinks: Optional[int] = None
 
     def init(
         self,
@@ -58,8 +60,19 @@ class Slice(RedBlue):
         directions = state["step_size"] * self.get_directions(
             num_target, key0, complementary.coordinates
         )
+
+        if tune and self.tune_max_doubles is not None:
+            max_doubles = self.tune_max_doubles
+        else:
+            max_doubles = self.max_doubles
+
+        if tune and self.tune_max_shrinks is not None:
+            max_shrinks = self.tune_max_shrinks
+        else:
+            max_shrinks = self.max_shrinks
+
         sample_func = partial(
-            slice_sample, self.max_doubles, self.max_shrinks, log_prob_fn
+            slice_sample, max_doubles, max_shrinks, log_prob_fn
         )
         updated, stats = jax.vmap(sample_func)(
             jnp.asarray(keys), target, directions
