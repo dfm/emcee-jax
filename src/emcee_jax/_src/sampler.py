@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 from functools import partial
 from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union
 
@@ -6,6 +8,7 @@ import jax.linear_util as lu
 import jax.numpy as jnp
 from jax import random
 from jax.flatten_util import ravel_pytree
+from jax_dataclasses import pytree_dataclass, static_field
 
 from emcee_jax._src.moves.core import Move, StepState, Stretch
 from emcee_jax._src.ravel_util import ravel_ensemble
@@ -16,8 +19,91 @@ from emcee_jax._src.types import (
     PyTree,
     SampleStats,
     WalkerState,
+    WrappedLogProbFn,
 )
 from emcee_jax.trace import Trace
+
+
+@pytree_dataclass
+class SamplerCarry:
+    flat_log_prob_fn: WrappedLogProbFn = static_field()
+    step_state: StepState
+
+
+@pytree_dataclass
+class EnsembleSampler:
+    wrapped_log_prob_fn: lu.WrappedFun = static_field()
+    move: Move
+
+    @classmethod
+    def setup(
+        cls,
+        log_prob_fn: LogProbFn,
+        *,
+        move: Optional[Move] = None,
+        log_prob_args: Tuple[Any, ...] = (),
+        log_prob_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> "EnsembleSampler":
+        move = Stretch() if move is None else move
+        log_prob_kwargs = {} if log_prob_kwargs is None else log_prob_kwargs
+        wrapped_log_prob_fn = lu.wrap_init(
+            partial(log_prob_fn, *log_prob_args, **log_prob_kwargs)
+        )
+        wrapped_log_prob_fn = handle_deterministics_and_nans(
+            wrapped_log_prob_fn
+        )
+        return cls(wrapped_log_prob_fn, move)
+
+    def init(
+        self,
+        init_key: random.KeyArray,
+        ensemble: Union[WalkerState, Array],
+    ):
+        # Handle cases when either an ensemble or array is passed as input
+        is_state = isinstance(ensemble, WalkerState)
+        is_state = is_state or isinstance(ensemble, FlatWalkerState)
+        if not is_state:
+            coordinates = ensemble
+            log_probability, deterministics = jax.vmap(
+                self.wrapped_log_prob_fn.call_wrapped
+            )(coordinates)
+        else:
+            coordinates = ensemble.coordinates
+            log_probability = ensemble.log_probability
+            deterministics = ensemble.deterministics
+
+        # Work out the ravel/unravel operations for this ensemble
+        coordinates, unravel_coordinates = ravel_ensemble(coordinates)
+        deterministics, unravel_deterministics = ravel_ensemble(deterministics)
+
+        # Deal with the case where deterministics are not provided
+        deterministics = deterministics.reshape((coordinates.shape[0], -1))
+
+        if log_probability.shape != coordinates.shape[:1]:
+            raise ValueError(
+                "Invalid shape for initial log_probability: expected "
+                f"{coordinates.shape[:1]} but found {log_probability.shape}"
+            )
+
+        flat_log_prob_fn = flatten_log_prob_fn(
+            self.wrapped_log_prob_fn, unravel_coordinates
+        ).call_wrapped
+
+        # Set up a flattened version of the ensemble state
+        initial_ensemble = FlatWalkerState(
+            coordinates=coordinates,
+            deterministics=deterministics,
+            log_probability=log_probability,
+        )
+
+        # Initialize the move function
+        initial_carry = self.move.init(
+            flat_log_prob_fn, init_key, initial_ensemble
+        )
+
+        return SamplerCarry(
+            flat_log_prob_fn=flat_log_prob_fn, step_state=initial_carry
+        )
 
 
 def sampler(
