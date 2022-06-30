@@ -1,13 +1,4 @@
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    NamedTuple,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Tuple, Union
 
 Array = Any
 PyTree = Union[Array, Iterable[Array], Dict[Any, Array], NamedTuple]

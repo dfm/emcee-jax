@@ -1,6 +1,6 @@
 # emcee-jax
 
-An experiement.
+An experiment.
 
 A simple example:
 

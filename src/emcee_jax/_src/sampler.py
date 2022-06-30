@@ -9,7 +9,6 @@ from jax.flatten_util import ravel_pytree
 
 from emcee_jax._src.moves.core import Move, StepState, Stretch
 from emcee_jax._src.ravel_util import ravel_ensemble
-from emcee_jax.trace import Trace
 from emcee_jax._src.types import (
     Array,
     FlatWalkerState,
@@ -18,6 +17,7 @@ from emcee_jax._src.types import (
     SampleStats,
     WalkerState,
 )
+from emcee_jax.trace import Trace
 
 
 def sampler(

@@ -10,9 +10,9 @@ from emcee_jax.moves.util import apply_accept
 from emcee_jax.types import (
     Array,
     FlatWalkerState,
+    PyTree,
     SampleStats,
     WrappedLogProbFn,
-    PyTree,
 )
 
 

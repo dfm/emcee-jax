@@ -1,3 +1,5 @@
+# nopycln: file
+
 __bibtex__ = """
 @article{emcee,
    author = {{Foreman-Mackey}, D. and {Hogg}, D.~W. and {Lang}, D. and {Goodman}, J.},

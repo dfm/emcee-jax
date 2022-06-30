@@ -4,6 +4,6 @@ from emcee_jax._src.moves import (
     Move as Move,
     Slice as Slice,
     Stretch as Stretch,
-    compose as compose,
     apply_accept as apply_accept,
+    compose as compose,
 )
