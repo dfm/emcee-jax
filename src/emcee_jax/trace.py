@@ -1,5 +1,3 @@
-__all__ = ["Trace", "trace_to_inference_data"]
-
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import jax.numpy as jnp

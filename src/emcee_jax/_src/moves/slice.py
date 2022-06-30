@@ -5,9 +5,9 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from emcee_jax.moves.core import MoveState, RedBlue, StepState
-from emcee_jax.moves.util import apply_accept
-from emcee_jax.types import (
+from emcee_jax._src.moves.core import MoveState, RedBlue, StepState
+from emcee_jax._src.moves.util import apply_accept
+from emcee_jax._src.types import (
     Array,
     FlatWalkerState,
     PyTree,
