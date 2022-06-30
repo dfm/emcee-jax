@@ -113,7 +113,10 @@ def build_sampler(
             return carry, (carry, stats)
 
         # Run the sampler
-        (_, flat_ensemble), ((_, flat_samples), sample_stats) = jax.lax.scan(
+        (_, flat_ensemble, final_extras), (
+            (_, flat_samples, extras_trace),
+            sample_stats,
+        ) = jax.lax.scan(
             wrapped_step, initial_carry, random.split(sample_key, steps)
         )
 
@@ -140,7 +143,9 @@ def build_sampler(
         )
         return Trace(
             final_state=final_ensemble,
+            final_extras=final_extras,
             samples=samples,
+            extras=extras_trace,
             sample_stats=sample_stats,
         )
 

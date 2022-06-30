@@ -22,7 +22,7 @@ CLASSIFIERS = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
 ]
-INSTALL_REQUIRES = ["jax", "jaxlib"]
+INSTALL_REQUIRES = ["jax", "jaxlib", "jax_dataclasses"]
 EXTRA_REQUIRE = {
     "test": ["pytest"],
     "extras": ["arviz"],

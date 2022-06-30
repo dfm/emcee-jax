@@ -1,19 +1,21 @@
 __all__ = ["Stretch", "DiffEvol"]
 
-from dataclasses import dataclass
+from collections import OrderedDict
 from functools import partial
-from typing import Any, NamedTuple, Optional, Tuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import random
 from jax.tree_util import tree_map
+from jax_dataclasses import pytree_dataclass
 
 from emcee_jax.moves.util import apply_accept
 from emcee_jax.types import (
     Array,
     FlatWalkerState,
+    PyTree,
     SampleStats,
     WrappedLogProbFn,
 )
@@ -24,16 +26,29 @@ MoveState = Optional[Any]
 class StepState(NamedTuple):
     move_state: MoveState
     walker_state: FlatWalkerState
+    extras: PyTree
 
 
+@pytree_dataclass
 class Move:
+    if TYPE_CHECKING:
+
+        def __init__(self, *args: Any, **kwargs: Any):
+            super().__init__(*args, **kwargs)
+
+    @classmethod
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        pytree_dataclass(cls)
+
     def init(
         self,
         log_prob_fn: WrappedLogProbFn,
         random_key: random.KeyArray,
         ensemble: FlatWalkerState,
     ) -> StepState:
-        return StepState(move_state=None, walker_state=ensemble)
+        del log_prob_fn, random_key
+        return StepState(move_state=None, walker_state=ensemble, extras=None)
 
     def step(
         self,
@@ -43,7 +58,86 @@ class Move:
         *,
         tune: bool = False,
     ) -> Tuple[StepState, SampleStats]:
+        del log_prob_fn, random_key, state, tune
         raise NotImplementedError
+
+
+class Composed(Move):
+    moves: Sequence[Tuple[str, Move]]
+
+    def init(
+        self,
+        log_prob_fn: WrappedLogProbFn,
+        random_key: random.KeyArray,
+        ensemble: FlatWalkerState,
+    ) -> StepState:
+        keys = random.split(random_key, len(self.moves))
+        move_state = OrderedDict()
+        extras = OrderedDict()
+        for key, (name, move) in zip(keys, self.moves):
+            state = move.init(log_prob_fn, key, ensemble)
+            move_state[name] = state.move_state
+            extras[name] = state.extras
+        return StepState(
+            move_state=move_state,
+            walker_state=ensemble,
+            extras=extras,
+        )
+
+    def step(
+        self,
+        log_prob_fn: WrappedLogProbFn,
+        random_key: random.KeyArray,
+        state: StepState,
+        *,
+        tune: bool = False,
+    ) -> Tuple[StepState, SampleStats]:
+        keys = random.split(random_key, len(self.moves))
+
+        move_state = state.move_state
+        walker_state = state.walker_state
+        extras = state.extras
+        if TYPE_CHECKING:
+            assert isinstance(move_state, OrderedDict)
+            assert isinstance(extras, OrderedDict)
+
+        new_move_state = OrderedDict()
+        new_extras = OrderedDict()
+        stats = OrderedDict()
+
+        for key, (name, move) in zip(keys, self.moves):
+            new_state, stats_ = move.step(
+                log_prob_fn,
+                key,
+                StepState(
+                    move_state=move_state[name],
+                    walker_state=walker_state,
+                    extras=extras[name],
+                ),
+                tune=tune,
+            )
+            new_move_state[name] = new_state.move_state
+            new_extras[name] = new_state.extras
+            stats[name] = stats_
+            walker_state = new_state.walker_state
+
+        return (
+            StepState(
+                move_state=new_move_state,
+                walker_state=walker_state,
+                extras=new_extras,
+            ),
+            stats,
+        )
+
+
+def compose(*moves: Move, **named_moves: Move) -> Composed:
+    transformed = []
+    for ind, move in enumerate(moves):
+        transformed.append((f"{move.__class__.__name__}_{ind}", move))
+    for name, move in named_moves.items():
+        transformed.append((name, move))
+    return Composed(moves=transformed)
 
 
 class RedBlue(Move):
@@ -52,11 +146,16 @@ class RedBlue(Move):
         log_prob_fn: WrappedLogProbFn,
         state: MoveState,
         key: random.KeyArray,
-        target: FlatWalkerState,
-        complementary: FlatWalkerState,
+        target_walkers: FlatWalkerState,
+        target_extras: PyTree,
+        compl_walkers: FlatWalkerState,
+        compl_extras: PyTree,
         *,
         tune: bool,
-    ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
+    ) -> Tuple[MoveState, FlatWalkerState, PyTree, SampleStats]:
+        del log_prob_fn, state, key, tune
+        del target_walkers, target_extras
+        del compl_walkers, compl_extras
         raise NotImplementedError
 
     def step(
@@ -67,41 +166,39 @@ class RedBlue(Move):
         *,
         tune: bool = False,
     ) -> Tuple[StepState, SampleStats]:
-        move_state, ensemble = state
+        move_state, ensemble, extras = state
         key1, key2 = random.split(random_key)
         nwalkers, _ = ensemble.coordinates.shape
         mid = nwalkers // 2
 
-        half1 = tree_map(lambda x: x[:mid], ensemble)
-        half2 = tree_map(lambda x: x[mid:], ensemble)
+        ens1 = tree_map(lambda x: x[:mid], ensemble)
+        ext1 = tree_map(lambda x: x[:mid], extras)
+        ens2 = tree_map(lambda x: x[mid:], ensemble)
+        ext2 = tree_map(lambda x: x[mid:], extras)
 
-        def half_step(
-            current_state: MoveState,
-            key: random.KeyArray,
-            target: FlatWalkerState,
-            complementary: FlatWalkerState,
-        ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
-            new_state, new_target, stats = self.propose(
-                log_prob_fn,
-                current_state,
-                key,
-                target,
-                complementary,
-                tune=tune,
-            )
-            return (new_state, new_target, stats)
-
-        move_state, half1, stats1 = half_step(move_state, key1, half1, half2)
-        move_state, half2, stats2 = half_step(move_state, key2, half2, half1)
+        half_step = partial(self.propose, log_prob_fn, tune=tune)
+        move_state, ens1, ext1, stats1 = half_step(
+            move_state, key1, ens1, ext1, ens2, ext2
+        )
+        move_state, ens2, ext2, stats2 = half_step(
+            move_state, key2, ens2, ext2, ens1, ext1
+        )
         stats = tree_map(lambda *x: jnp.concatenate(x, axis=0), stats1, stats2)
-        updated = tree_map(lambda *x: jnp.concatenate(x, axis=0), half1, half2)
-        return StepState(move_state=move_state, walker_state=updated), stats
+        ensemble = tree_map(lambda *x: jnp.concatenate(x, axis=0), ens1, ens2)
+        extras = tree_map(lambda *x: jnp.concatenate(x, axis=0), ext1, ext2)
+        return (
+            StepState(
+                move_state=move_state, walker_state=ensemble, extras=extras
+            ),
+            stats,
+        )
 
 
 class SimpleRedBlue(RedBlue):
     def propose_simple(
         self, key: random.KeyArray, s: Array, c: Array
     ) -> Tuple[Array, Array]:
+        del key, s, c
         raise NotImplementedError
 
     def propose(
@@ -109,35 +206,37 @@ class SimpleRedBlue(RedBlue):
         log_prob_fn: WrappedLogProbFn,
         state: MoveState,
         key: random.KeyArray,
-        target: FlatWalkerState,
-        complementary: FlatWalkerState,
+        target_walkers: FlatWalkerState,
+        target_extras: PyTree,
+        compl_walkers: FlatWalkerState,
+        compl_extras: PyTree,
         *,
         tune: bool,
-    ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
+    ) -> Tuple[MoveState, FlatWalkerState, PyTree, SampleStats]:
+        del compl_extras, tune
         key1, key2 = random.split(key)
         q, f = self.propose_simple(
-            key1, target.coordinates, complementary.coordinates
+            key1, target_walkers.coordinates, compl_walkers.coordinates
         )
         nlp, ndet = jax.vmap(log_prob_fn)(q)
-        updated = FlatWalkerState(
+        updated = target_walkers._replace(
             coordinates=q,
             deterministics=ndet,
             log_probability=nlp,
-            extras=target.extras,
         )
 
-        diff = nlp - target.log_probability + f
+        diff = nlp - target_walkers.log_probability + f
         accept_prob = jnp.exp(diff)
         accept = accept_prob > random.uniform(key2, shape=diff.shape)
-        updated = apply_accept(accept, target, updated)
+        updated = apply_accept(accept, target_walkers, updated)
         return (
             state,
             updated,
+            target_extras,
             {"accept": accept, "accept_prob": accept_prob},
         )
 
 
-@dataclass(frozen=True)
 class Stretch(SimpleRedBlue):
     a: Array = 2.0
 
@@ -153,7 +252,6 @@ class Stretch(SimpleRedBlue):
         return q, (ndim - 1) * jnp.log(z)
 
 
-@dataclass(frozen=True)
 class DiffEvol(SimpleRedBlue):
     gamma: Optional[Array] = None
     sigma: Array = 1.0e-5
