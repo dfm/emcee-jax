@@ -1,14 +1,9 @@
-__all__ = ["DiffEvolSlice"]
-
-from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import random
-from jax.tree_util import tree_map
 
 from emcee_jax.moves.core import MoveState, RedBlue, StepState
 from emcee_jax.moves.util import apply_accept
@@ -17,10 +12,10 @@ from emcee_jax.types import (
     FlatWalkerState,
     SampleStats,
     WrappedLogProbFn,
+    PyTree,
 )
 
 
-@dataclass(frozen=True)
 class Slice(RedBlue):
     max_doubles: int = 10_000
     max_shrinks: int = 100
@@ -37,11 +32,13 @@ class Slice(RedBlue):
         return StepState(
             move_state={"step_size": self.initial_step_size},
             walker_state=ensemble,
+            extras=None,
         )
 
     def get_directions(
         self, size: int, key: random.KeyArray, complementary: Array
     ) -> Array:
+        del size, key, complementary
         raise NotImplementedError
 
     def propose(
@@ -49,16 +46,19 @@ class Slice(RedBlue):
         log_prob_fn: WrappedLogProbFn,
         state: MoveState,
         key: random.KeyArray,
-        target: FlatWalkerState,
-        complementary: FlatWalkerState,
+        target_walkers: FlatWalkerState,
+        target_extras: PyTree,
+        compl_walkers: FlatWalkerState,
+        compl_extras: PyTree,
         *,
         tune: bool,
-    ) -> Tuple[MoveState, FlatWalkerState, SampleStats]:
+    ) -> Tuple[MoveState, FlatWalkerState, PyTree, SampleStats]:
+        del compl_extras
         assert state is not None
-        num_target = target.coordinates.shape[0]
+        num_target = target_walkers.coordinates.shape[0]
         key0, *keys = random.split(key, num_target + 1)
         directions = state["step_size"] * self.get_directions(
-            num_target, key0, complementary.coordinates
+            num_target, key0, compl_walkers.coordinates
         )
 
         if tune and self.tune_max_doubles is not None:
@@ -75,7 +75,7 @@ class Slice(RedBlue):
             slice_sample, max_doubles, max_shrinks, log_prob_fn
         )
         updated, stats = jax.vmap(sample_func)(
-            jnp.asarray(keys), target, directions
+            jnp.asarray(keys), target_walkers, directions
         )
         accept = jnp.logical_and(stats["bounds_ok"], stats["sample_ok"])
         stats["accept"] = accept
@@ -83,7 +83,7 @@ class Slice(RedBlue):
         stats["step_size"] = jnp.full_like(
             updated.log_probability, state["step_size"]
         )
-        updated = apply_accept(accept, target, updated)
+        updated = apply_accept(accept, target_walkers, updated)
 
         if tune:
             num_doubles = 0.5 * jnp.mean(
@@ -95,10 +95,9 @@ class Slice(RedBlue):
         else:
             next_state = state
 
-        return next_state, updated, stats
+        return next_state, updated, target_extras, stats
 
 
-@dataclass(frozen=True)
 class DiffEvolSlice(Slice):
     def get_directions(
         self, size: int, key: random.KeyArray, c: Array

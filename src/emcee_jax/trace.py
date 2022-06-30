@@ -7,7 +7,7 @@ from jax import device_get
 from jax.tree_util import tree_flatten, tree_map
 
 import emcee_jax
-from emcee_jax.types import SampleStats, WalkerState
+from emcee_jax.types import PyTree, SampleStats, WalkerState
 
 if TYPE_CHECKING:
     from arviz import InferenceData
@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 class Trace(NamedTuple):
     final_state: WalkerState
+    final_extras: PyTree
     samples: WalkerState
+    extras: PyTree
     sample_stats: SampleStats
 
     def to_inference_data(self, **kwargs: Any) -> "InferenceData":

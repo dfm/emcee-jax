@@ -1,6 +1,5 @@
 __all__ = ["HMC"]
 
-from dataclasses import dataclass
 from functools import partial
 from typing import (
     Any,
@@ -101,7 +100,6 @@ def mh_accept(
     raise NotImplementedError
 
 
-@dataclass(frozen=True)
 class HMC(RedBlue):
     step_size: Array = 0.1
     num_steps: Array = 50
