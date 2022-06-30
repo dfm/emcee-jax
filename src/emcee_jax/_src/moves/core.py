@@ -1,5 +1,3 @@
-__all__ = ["Stretch", "DiffEvol"]
-
 from collections import OrderedDict
 from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Sequence, Tuple
@@ -11,8 +9,8 @@ from jax import random
 from jax.tree_util import tree_map
 from jax_dataclasses import pytree_dataclass
 
-from emcee_jax.moves.util import apply_accept
-from emcee_jax.types import (
+from emcee_jax._src.moves.util import apply_accept
+from emcee_jax._src.types import (
     Array,
     FlatWalkerState,
     PyTree,

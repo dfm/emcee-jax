@@ -1,4 +1,4 @@
-__all__ = ["HMC"]
+# mypy: ignore-errors
 
 from functools import partial
 from typing import (
@@ -19,8 +19,8 @@ import jax.scipy as jsp
 from jax import random
 from jax.tree_util import tree_map
 
-from emcee_jax.moves.core import MoveState, RedBlue, StepState
-from emcee_jax.types import (
+from emcee_jax._src.moves.core import MoveState, RedBlue, StepState
+from emcee_jax._src.types import (
     Array,
     FlatWalkerState,
     PyTree,

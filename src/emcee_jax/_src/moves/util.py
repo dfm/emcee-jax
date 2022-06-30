@@ -1,5 +1,3 @@
-__all__ = ["apply_accept"]
-
 from functools import partial
 from typing import TypeVar
 
@@ -7,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import tree_map
 
-from emcee_jax.types import Array, PyTree
+from emcee_jax._src.types import Array, PyTree
 
 T = TypeVar("T", PyTree, Array)
 

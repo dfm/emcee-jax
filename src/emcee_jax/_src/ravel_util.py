@@ -4,8 +4,6 @@ This module is based on the implementation of ``ravel_pytree`` in
 in an ensemble.
 """
 
-__all__ = ["ravel_ensemble"]
-
 import warnings
 from typing import Callable, List, Tuple
 
@@ -17,7 +15,7 @@ from jax._src import dtypes
 from jax._src.util import safe_zip
 from jax.tree_util import tree_flatten, tree_unflatten
 
-from emcee_jax.types import Array, PyTree
+from emcee_jax._src.types import Array, PyTree
 
 UnravelFn = Callable[[Array], PyTree]
 
