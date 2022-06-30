@@ -7,7 +7,7 @@ from jax import device_get
 from jax.tree_util import tree_flatten, tree_map
 
 import emcee_jax
-from emcee_jax.types import PyTree, SampleStats, WalkerState
+from emcee_jax._src.types import PyTree, SampleStats, WalkerState
 
 if TYPE_CHECKING:
     from arviz import InferenceData

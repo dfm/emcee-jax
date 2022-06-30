@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from jax.tree_util import tree_flatten, tree_structure
 
-from emcee_jax.ravel_util import ravel_ensemble
+from emcee_jax._src.ravel_util import ravel_ensemble
 
 ensembles_and_shapes = [
     (jnp.ones((5, 3)), (5, 3)),

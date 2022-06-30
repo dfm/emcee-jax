@@ -1,5 +1,3 @@
-__all__ = ["build_sampler"]
-
 from functools import partial
 from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union
 
@@ -9,10 +7,10 @@ import jax.numpy as jnp
 from jax import random
 from jax.flatten_util import ravel_pytree
 
-from emcee_jax.moves.core import Move, StepState, Stretch
-from emcee_jax.ravel_util import ravel_ensemble
+from emcee_jax._src.moves.core import Move, StepState, Stretch
+from emcee_jax._src.ravel_util import ravel_ensemble
 from emcee_jax.trace import Trace
-from emcee_jax.types import (
+from emcee_jax._src.types import (
     Array,
     FlatWalkerState,
     LogProbFn,
@@ -22,7 +20,7 @@ from emcee_jax.types import (
 )
 
 
-def build_sampler(
+def sampler(
     log_prob_fn: LogProbFn,
     *,
     move: Optional[Move] = None,

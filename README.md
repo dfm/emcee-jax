@@ -6,7 +6,7 @@ A simple example:
 
 ```python
 >>> import jax
->>> from emcee_jax.sampler import build_sampler
+>>> import emcee_jax
 >>>
 >>> def log_prob(theta, a1=100.0, a2=20.0):
 ...     x1, x2 = theta
@@ -15,7 +15,7 @@ A simple example:
 >>> num_walkers, num_steps = 100, 1000
 >>> key1, key2 = jax.random.split(jax.random.PRNGKey(0))
 >>> coords = jax.random.normal(key1, shape=(num_walkers, 2))
->>> sample = build_sampler(log_prob)
+>>> sample = emcee_jax.sampler(log_prob)
 >>> trace = sample(key2, coords, steps=num_steps)
 
 ```
@@ -24,7 +24,7 @@ An example using PyTrees as input coordinates:
 
 ```python
 >>> import jax
->>> from emcee_jax.sampler import build_sampler
+>>> import emcee_jax
 >>>
 >>> def log_prob(theta, a1=100.0, a2=20.0):
 ...     x1, x2 = theta["x"], theta["y"]
@@ -36,7 +36,7 @@ An example using PyTrees as input coordinates:
 ...     "x": jax.random.normal(key1, shape=(num_walkers,)),
 ...     "y": jax.random.normal(key2, shape=(num_walkers,)),
 ... }
->>> sample = build_sampler(log_prob)
+>>> sample = emcee_jax.sampler(log_prob)
 >>> trace = sample(key3, coords, steps=num_steps)
 
 ```
@@ -45,7 +45,7 @@ An example that includes deterministics:
 
 ```python
 >>> import jax
->>> from emcee_jax.sampler import build_sampler
+>>> import emcee_jax
 >>>
 >>> def log_prob(theta, a1=100.0, a2=20.0):
 ...     x1, x2 = theta
@@ -58,7 +58,7 @@ An example that includes deterministics:
 >>> num_walkers, num_steps = 100, 1000
 >>> key1, key2 = jax.random.split(jax.random.PRNGKey(0))
 >>> coords = jax.random.normal(key1, shape=(num_walkers, 2))
->>> sample = build_sampler(log_prob)
+>>> sample = emcee_jax.sampler(log_prob)
 >>> trace = sample(key2, coords, steps=num_steps)
 
 ```
@@ -68,7 +68,7 @@ You can even use pure-Python log probability functions:
 ```python
 >>> import jax
 >>> import numpy as np
->>> from emcee_jax.sampler import build_sampler
+>>> import emcee_jax
 >>> from emcee_jax.host_callback import wrap_python_log_prob_fn
 >>>
 >>> # A log prob function that uses numpy, not jax.numpy inside
@@ -80,7 +80,7 @@ You can even use pure-Python log probability functions:
 >>> num_walkers, num_steps = 100, 1000
 >>> key1, key2 = jax.random.split(jax.random.PRNGKey(0))
 >>> coords = jax.random.normal(key1, shape=(num_walkers, 2))
->>> sample = build_sampler(log_prob)
+>>> sample = emcee_jax.sampler(log_prob)
 >>> trace = sample(key2, coords, steps=num_steps)
 
 ```
