@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import emcee_jax
+from emcee_jax import moves
 from emcee_jax.host_callback import wrap_python_log_prob_fn
 
 
@@ -139,7 +140,9 @@ def test_to_inference_data_full(seed=0, num_walkers=5, num_steps=21):
         "x": jax.random.normal(key1, shape=(num_walkers,)),
         "y": jax.random.normal(key2, shape=(num_walkers,)),
     }
-    sampler = emcee_jax.EnsembleSampler(log_prob)
+    sampler = emcee_jax.EnsembleSampler(
+        log_prob, move=moves.compose(moves.Stretch(), moves.DiffEvol())
+    )
     state = sampler.init(key3, coords)
     trace = sampler.sample(key4, state, num_steps)
     data = trace.to_inference_data()

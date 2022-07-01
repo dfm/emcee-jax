@@ -14,7 +14,13 @@ from emcee_jax import EnsembleSampler, moves
 @pytest.mark.parametrize(
     "ndim,move",
     product(
-        [1, 2], [moves.Stretch(), moves.DiffEvol(), moves.DiffEvolSlice()]
+        [1, 2],
+        [
+            moves.Stretch(),
+            moves.DiffEvol(),
+            moves.DiffEvolSlice(),
+            moves.compose(moves.Stretch(), moves.DiffEvolSlice()),
+        ],
     ),
 )
 def test_uniform(ndim, move, seed=1, num_walkers=32, num_steps=2_000):
