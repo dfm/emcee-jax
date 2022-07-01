@@ -37,7 +37,10 @@ def handle_deterministics_and_nans(
         raise ValueError(
             "A log probability function must return a scalar value, got None"
         )
-    if log_prob.shape != ():
+
+    try:
+        log_prob = jnp.reshape(log_prob, ())
+    except TypeError:
         raise ValueError(
             "A log probability function must return a scalar; "
             f"computed shape is '{log_prob.shape}', expected '()'"

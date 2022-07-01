@@ -238,7 +238,7 @@ class DiffEvol(SimpleRedBlue):
 
         @jax.vmap
         def update(s: Array, c: Array, norm: Array) -> Array:
-            delta = jnp.squeeze(jnp.diff(c))
+            delta = c[1] - c[0]
             delta = (gamma0 + self.sigma * norm) * delta
             return s + delta
 
