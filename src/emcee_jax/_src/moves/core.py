@@ -82,7 +82,7 @@ class Composed(Move):
         keys = random.split(random_key, len(self.moves))
         new_state = OrderedDict()
         new_extras = OrderedDict()
-        new_stats = OrderedDict()
+        new_stats = {}
         for key, (name, move) in zip(keys, self.moves):
             new, new_stats[name] = move.step(
                 log_prob_fn,

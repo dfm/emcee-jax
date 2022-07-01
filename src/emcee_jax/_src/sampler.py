@@ -57,7 +57,9 @@ class Trace(NamedTuple):
         samples = tree_map(lambda x: jnp.swapaxes(x, 0, 1), samples)
 
         # Convert sample stats to ArviZ's preferred style
-        sample_stats = dict(self.sample_stats, lp=self.samples.log_probability)
+        sample_stats = dict(
+            _flatten_dict(self.sample_stats), lp=self.samples.log_probability
+        )
         renames = [("accept_prob", "acceptance_rate")]
         for old, new in renames:
             if old in sample_stats:
@@ -71,6 +73,21 @@ class Trace(NamedTuple):
             ),
             **kwargs,
         )
+
+
+def _flatten_dict(
+    obj: Union[Dict[str, Any], Any]
+) -> Union[Dict[str, Any], Any]:
+    if not isinstance(obj, dict):
+        return obj
+    result = {}
+    for k, v in obj.items():
+        if isinstance(v, dict):
+            for k1, v1 in _flatten_dict(v).items():
+                result[f"{k}:{k1}"] = v1
+        else:
+            result[k] = v
+    return result
 
 
 @dataclass(frozen=True, init=False)
