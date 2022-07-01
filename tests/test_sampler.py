@@ -26,42 +26,48 @@ def build_rosenbrock(pytree_input=False, deterministics=False):
 
 def test_basic(seed=0, num_walkers=5, num_steps=21):
     log_prob = build_rosenbrock()
-    key1, key2 = jax.random.split(jax.random.PRNGKey(seed))
+    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     coords = jax.random.normal(key1, shape=(num_walkers, 2))
-    sample = emcee_jax.sampler(log_prob)
-    trace = sample(key2, coords, steps=num_steps)
-    assert trace.samples.deterministics is None
-    assert trace.samples.coordinates.shape == (num_steps, num_walkers, 2)
-    assert trace.samples.log_probability.shape == (num_steps, num_walkers)
+    sampler = emcee_jax.EnsembleSampler(log_prob)
+    state = sampler.init(key2, coords)
+    trace = sampler.sample(key3, state, num_steps)
+    samples = trace.samples
+    assert samples.deterministics is None
+    assert samples.coordinates.shape == (num_steps, num_walkers, 2)
+    assert samples.log_probability.shape == (num_steps, num_walkers)
     assert trace.sample_stats["accept"].shape == (num_steps, num_walkers)
 
 
 def test_pytree_input(seed=0, num_walkers=5, num_steps=21):
     log_prob = build_rosenbrock(pytree_input=True)
-    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
+    key1, key2, key3, key4 = jax.random.split(jax.random.PRNGKey(seed), 4)
     coords = {
         "x": jax.random.normal(key1, shape=(num_walkers,)),
         "y": jax.random.normal(key2, shape=(num_walkers,)),
     }
-    sample = emcee_jax.sampler(log_prob)
-    trace = sample(key3, coords, steps=num_steps)
+    sampler = emcee_jax.EnsembleSampler(log_prob)
+    state = sampler.init(key3, coords)
+    trace = sampler.sample(key4, state, num_steps)
+    samples = trace.samples
     shape = (num_steps, num_walkers)
-    assert trace.samples.deterministics is None
-    assert trace.samples.coordinates["x"].shape == shape
-    assert trace.samples.log_probability.shape == shape
+    assert samples.deterministics is None
+    assert samples.coordinates["x"].shape == shape
+    assert samples.log_probability.shape == shape
     assert trace.sample_stats["accept"].shape == shape
 
 
 def test_deterministics(seed=0, num_walkers=5, num_steps=21):
     log_prob = build_rosenbrock(deterministics=True)
-    key1, key2 = jax.random.split(jax.random.PRNGKey(seed))
+    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     coords = jax.random.normal(key1, shape=(num_walkers, 2))
-    sample = emcee_jax.sampler(log_prob)
-    trace = sample(key2, coords, steps=num_steps)
+    sampler = emcee_jax.EnsembleSampler(log_prob)
+    state = sampler.init(key2, coords)
+    trace = sampler.sample(key3, state, num_steps)
+    samples = trace.samples
     shape = (num_steps, num_walkers)
-    assert trace.samples.deterministics["some_number"].shape == shape
-    assert trace.samples.coordinates.shape == (num_steps, num_walkers, 2)
-    assert trace.samples.log_probability.shape == shape
+    assert samples.deterministics["some_number"].shape == shape
+    assert samples.coordinates.shape == (num_steps, num_walkers, 2)
+    assert samples.log_probability.shape == shape
     assert trace.sample_stats["accept"].shape == shape
 
 
@@ -74,13 +80,15 @@ def test_host_callback(seed=0, num_walkers=5, num_steps=21):
         return -(a1 * np.square(x2 - x1**2) + np.square(1 - x1)) / a2
 
     num_walkers, num_steps = 100, 1000
-    key1, key2 = jax.random.split(jax.random.PRNGKey(seed))
+    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     coords = jax.random.normal(key1, shape=(num_walkers, 2))
-    sample = emcee_jax.sampler(log_prob)
-    trace = sample(key2, coords, steps=num_steps)
-    assert trace.samples.deterministics is None
-    assert trace.samples.coordinates.shape == (num_steps, num_walkers, 2)
-    assert trace.samples.log_probability.shape == (num_steps, num_walkers)
+    sampler = emcee_jax.EnsembleSampler(log_prob)
+    state = sampler.init(key2, coords)
+    trace = sampler.sample(key3, state, num_steps)
+    samples = trace.samples
+    assert samples.deterministics is None
+    assert samples.coordinates.shape == (num_steps, num_walkers, 2)
+    assert samples.log_probability.shape == (num_steps, num_walkers)
     assert trace.sample_stats["accept"].shape == (num_steps, num_walkers)
 
 
@@ -88,9 +96,9 @@ def test_init_errors(seed=0, num_walkers=5, num_steps=21):
     def check_raises(log_prob):
         key1, key2 = jax.random.split(jax.random.PRNGKey(seed))
         coords = jax.random.normal(key1, shape=(num_walkers, 2))
-        sample = emcee_jax.sampler(log_prob)
+        sampler = emcee_jax.EnsembleSampler(log_prob)
         with pytest.raises(ValueError):
-            sample(key2, coords, steps=num_steps)
+            state = sampler.init(key2, coords)
 
     check_raises(lambda *_: None)
     check_raises(lambda *_: jnp.ones(2))
@@ -101,10 +109,11 @@ def test_init_errors(seed=0, num_walkers=5, num_steps=21):
 def test_to_inference_data_basic(seed=0, num_walkers=5, num_steps=21):
     pytest.importorskip("arviz")
     log_prob = build_rosenbrock()
-    key1, key2 = jax.random.split(jax.random.PRNGKey(seed))
+    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
     coords = jax.random.normal(key1, shape=(num_walkers, 2))
-    sample = emcee_jax.sampler(log_prob)
-    trace = sample(key2, coords, steps=num_steps)
+    sampler = emcee_jax.EnsembleSampler(log_prob)
+    state = sampler.init(key2, coords)
+    trace = sampler.sample(key3, state, num_steps)
     data = trace.to_inference_data()
 
     assert data.posterior.dims["chain"] == num_walkers
@@ -125,13 +134,14 @@ def test_to_inference_data_basic(seed=0, num_walkers=5, num_steps=21):
 def test_to_inference_data_full(seed=0, num_walkers=5, num_steps=21):
     pytest.importorskip("arviz")
     log_prob = build_rosenbrock(pytree_input=True, deterministics=True)
-    key1, key2, key3 = jax.random.split(jax.random.PRNGKey(seed), 3)
+    key1, key2, key3, key4 = jax.random.split(jax.random.PRNGKey(seed), 4)
     coords = {
         "x": jax.random.normal(key1, shape=(num_walkers,)),
         "y": jax.random.normal(key2, shape=(num_walkers,)),
     }
-    sample = emcee_jax.sampler(log_prob)
-    trace = sample(key3, coords, steps=num_steps)
+    sampler = emcee_jax.EnsembleSampler(log_prob)
+    state = sampler.init(key3, coords)
+    trace = sampler.sample(key4, state, num_steps)
     data = trace.to_inference_data()
 
     assert data.posterior.dims["chain"] == num_walkers

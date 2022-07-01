@@ -10,7 +10,7 @@ from jax.tree_util import tree_flatten, tree_map
 from emcee_jax._src.ensemble import Ensemble
 from emcee_jax._src.log_prob_fn import LogProbFn, wrap_log_prob_fn
 from emcee_jax._src.moves.core import Extras, Move, MoveState, Stretch
-from emcee_jax._src.types import Array, PyTree, SampleStats
+from emcee_jax._src.types import Array, SampleStats
 
 if TYPE_CHECKING:
     from arviz import InferenceData
@@ -24,7 +24,9 @@ class SamplerState(NamedTuple):
 
 class Trace(NamedTuple):
     final_state: SamplerState
-    samples: SamplerState
+    samples: Ensemble
+    extras: Extras
+    move_state: MoveState
     sample_stats: SampleStats
 
     def to_inference_data(self, **kwargs: Any) -> "InferenceData":
@@ -33,13 +35,13 @@ class Trace(NamedTuple):
         import emcee_jax
 
         # Deal with different possible PyTree shapes
-        samples = self.samples.ensemble.coordinates
+        samples = self.samples.coordinates
         if not isinstance(samples, dict):
             flat, _ = tree_flatten(samples)
             samples = {f"param_{n}": x for n, x in enumerate(flat)}
 
         # Deterministics also live in samples
-        deterministics = self.samples.ensemble.deterministics
+        deterministics = self.samples.deterministics
         if deterministics is not None:
             if not isinstance(deterministics, dict):
                 flat, _ = tree_flatten(deterministics)
@@ -55,9 +57,7 @@ class Trace(NamedTuple):
         samples = tree_map(lambda x: jnp.swapaxes(x, 0, 1), samples)
 
         # Convert sample stats to ArviZ's preferred style
-        sample_stats = dict(
-            self.sample_stats, lp=self.samples.ensemble.log_probability
-        )
+        sample_stats = dict(self.sample_stats, lp=self.samples.log_probability)
         renames = [("accept_prob", "acceptance_rate")]
         for old, new in renames:
             if old in sample_stats:
@@ -111,6 +111,11 @@ class EnsembleSampler:
         *,
         tune: bool = False,
     ) -> Tuple[SamplerState, SampleStats]:
+        if not isinstance(state, SamplerState):
+            raise ValueError(
+                "Invalid input state; you must call sampler.init(...) "
+                "to initialize the state first"
+            )
         new_state, stats = self.move.step(
             self.wrapped_log_prob_fn, random_key, *state, tune=tune
         )
@@ -132,4 +137,10 @@ class EnsembleSampler:
 
         keys = random.split(random_key, num_steps)
         final, (trace, stats) = jax.lax.scan(one_step, state, keys)
-        return Trace(final, trace, stats)
+        return Trace(
+            final_state=final,
+            samples=trace.ensemble,
+            extras=trace.extras,
+            move_state=trace.move_state,
+            sample_stats=stats,
+        )
