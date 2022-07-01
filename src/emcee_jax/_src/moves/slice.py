@@ -1,19 +1,16 @@
 from functools import partial
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import jax
+import jax.linear_util as lu
 import jax.numpy as jnp
 from jax import random
+from jax.tree_util import tree_map
 
-from emcee_jax._src.moves.core import MoveState, RedBlue, StepState
+from emcee_jax._src.ensemble import Ensemble, get_ensemble_shape
+from emcee_jax._src.moves.core import MoveState, RedBlue
 from emcee_jax._src.moves.util import apply_accept
-from emcee_jax._src.types import (
-    Array,
-    FlatWalkerState,
-    PyTree,
-    SampleStats,
-    WrappedLogProbFn,
-)
+from emcee_jax._src.types import Array, Extras, PyTree, SampleStats
 
 
 class Slice(RedBlue):
@@ -25,40 +22,41 @@ class Slice(RedBlue):
 
     def init(
         self,
-        log_prob_fn: WrappedLogProbFn,
         random_key: random.KeyArray,
-        ensemble: FlatWalkerState,
-    ) -> StepState:
-        return StepState(
-            move_state={"step_size": self.initial_step_size},
-            walker_state=ensemble,
-            extras=None,
-        )
+        ensemble: Ensemble,
+    ) -> Tuple[MoveState, Extras]:
+        del random_key, ensemble
+        return {"step_size": self.initial_step_size}, None
 
     def get_directions(
-        self, size: int, key: random.KeyArray, complementary: Array
-    ) -> Array:
-        del size, key, complementary
+        self,
+        step_size: Array,
+        count: int,
+        key: random.KeyArray,
+        complementary: PyTree,
+    ) -> PyTree:
+        del step_size, count, key, complementary
         raise NotImplementedError
 
     def propose(
         self,
-        log_prob_fn: WrappedLogProbFn,
+        log_prob_fn: lu.WrappedFun,
         state: MoveState,
         key: random.KeyArray,
-        target_walkers: FlatWalkerState,
-        target_extras: PyTree,
-        compl_walkers: FlatWalkerState,
-        compl_extras: PyTree,
+        target_walkers: Ensemble,
+        target_extras: Extras,
+        compl_walkers: Ensemble,
+        compl_extras: Extras,
         *,
         tune: bool,
-    ) -> Tuple[MoveState, FlatWalkerState, PyTree, SampleStats]:
+    ) -> Tuple[MoveState, Ensemble, PyTree, SampleStats]:
         del compl_extras
-        assert state is not None
-        num_target = target_walkers.coordinates.shape[0]
+        if TYPE_CHECKING:
+            assert isinstance(state, dict)
+        num_target, _ = get_ensemble_shape(target_walkers.coordinates)
         key0, *keys = random.split(key, num_target + 1)
-        directions = state["step_size"] * self.get_directions(
-            num_target, key0, compl_walkers.coordinates
+        directions = self.get_directions(
+            state["step_size"], num_target, key0, compl_walkers.coordinates
         )
 
         if tune and self.tune_max_doubles is not None:
@@ -100,22 +98,30 @@ class Slice(RedBlue):
 
 class DiffEvolSlice(Slice):
     def get_directions(
-        self, size: int, key: random.KeyArray, c: Array
-    ) -> Array:
+        self,
+        step_size: Array,
+        count: int,
+        key: random.KeyArray,
+        complementary: PyTree,
+    ) -> PyTree:
         # See the ``DiffEvol`` move for an explanation of the following
-        choose2 = partial(random.choice, a=c, replace=False, shape=(2,))
-        helpers = jax.vmap(choose2)(random.split(key, size))
-        return jnp.squeeze(jnp.diff(helpers, axis=1))
+        nc, _ = get_ensemble_shape(complementary)
+        choose2 = partial(random.choice, a=nc, replace=False, shape=(2,))
+        inds = jax.vmap(choose2)(random.split(key, count))
+        return tree_map(
+            lambda c: step_size * jnp.squeeze(jnp.diff(c[inds], axis=1)),
+            complementary,
+        )
 
 
 def slice_sample(
     max_doubles: int,
     max_shrinks: int,
-    log_prob_fn: WrappedLogProbFn,
+    log_prob_fn: lu.WrappedFun,
     random_key: random.KeyArray,
-    initial: FlatWalkerState,
+    initial: Ensemble,
     dx: Array,
-) -> Tuple[FlatWalkerState, Dict[str, Any]]:
+) -> Tuple[Ensemble, Dict[str, Any]]:
     level_key, doubling_key, shrink_key = random.split(random_key, 3)
     level = initial.log_probability - random.exponential(level_key)
 
@@ -145,29 +151,31 @@ def slice_sample(
 
 def _find_bounds_by_doubling_while_loop(
     max_doubles: int,
-    log_prob_fn: WrappedLogProbFn,
+    log_prob_fn: lu.WrappedFun,
     level: Array,
     key: random.KeyArray,
-    x0: Array,
-    dx: Array,
-) -> Tuple[Array, Array, Array, Array, Array]:
+    x0: PyTree,
+    dx: PyTree,
+) -> Tuple[PyTree, PyTree, Array, Array, Array]:
     def doubling(
-        direction: float, args: Tuple[Array, Array, Array]
-    ) -> Tuple[Array, Array, Array]:
+        direction: float, args: Tuple[Array, Array, PyTree]
+    ) -> Tuple[Array, Array, PyTree]:
         count, found, loc = args
-        next_loc = loc + direction * dx
-        log_prob, _ = log_prob_fn(next_loc)
+        next_loc = tree_map(lambda loc, dx: loc + direction * dx, loc, dx)
+        log_prob, _ = log_prob_fn.call_wrapped(next_loc)
         return count + 1, found | jnp.less(log_prob, level), next_loc
 
     cond = lambda args: jnp.logical_and(
         jnp.less(args[0], max_doubles), jnp.any(jnp.logical_not(args[1]))
     )
     r = random.uniform(key)
+    init = tree_map(lambda x0, dx: x0 - r * dx, x0, dx)
     num_left, left_ok, left = jax.lax.while_loop(
-        cond, partial(doubling, -1), (0, False, x0 - r * dx)
+        cond, partial(doubling, -1), (0, False, init)
     )
+    init = tree_map(lambda x0, dx: x0 + (1 - r) * dx, x0, dx)
     num_right, right_ok, right = jax.lax.while_loop(
-        cond, partial(doubling, 1), (0, False, x0 + (1 - r) * dx)
+        cond, partial(doubling, 1), (0, False, init)
     )
 
     return left, right, num_left, num_right, jnp.logical_and(left_ok, right_ok)
@@ -175,30 +183,40 @@ def _find_bounds_by_doubling_while_loop(
 
 def _sample_by_shrinking_while_loop(
     max_shrinks: int,
-    log_prob_fn: WrappedLogProbFn,
+    log_prob_fn: lu.WrappedFun,
     level: Array,
     key: random.KeyArray,
-    initial: FlatWalkerState,
-    left: Array,
-    right: Array,
-) -> Tuple[FlatWalkerState, Array, Array]:
+    initial: Ensemble,
+    left: PyTree,
+    right: PyTree,
+) -> Tuple[Ensemble, Array, Array]:
     def shrinking(
-        args: Tuple[
-            Array, Array, Array, Array, random.KeyArray, FlatWalkerState
-        ]
-    ) -> Tuple[Array, Array, Array, Array, random.KeyArray, FlatWalkerState]:
+        args: Tuple[Array, Array, Array, Array, random.KeyArray, Ensemble]
+    ) -> Tuple[Array, Array, Array, Array, random.KeyArray, Ensemble]:
         count, found, left, right, key, state = args
         key, next_key = random.split(key)
         u = random.uniform(key)
-        x = (1 - u) * left + u * right
-        log_prob, deterministics = log_prob_fn(x)
+        x = tree_map(
+            lambda left, right: (1 - u) * left + u * right, left, right
+        )
+        log_prob, deterministics = log_prob_fn.call_wrapped(x)
         next_state = state._replace(
             coordinates=x,
             deterministics=deterministics,
             log_probability=log_prob,
         )
-        next_left = jnp.where(jnp.less(x, x0), x, left)
-        next_right = jnp.where(jnp.greater_equal(x, x0), x, right)
+        next_left = tree_map(
+            lambda x, x0, left: jnp.where(jnp.less(x, x0), x, left),
+            x,
+            x0,
+            left,
+        )
+        next_right = tree_map(
+            lambda x, x0, right: jnp.where(jnp.greater_equal(x, x0), x, right),
+            x,
+            x0,
+            right,
+        )
         accept = jnp.greater_equal(log_prob, level)
         return (
             count + 1,

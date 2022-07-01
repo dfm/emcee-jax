@@ -9,8 +9,9 @@ from jax.custom_batching import custom_vmap
 from jax.experimental import host_callback
 from jax.tree_util import tree_flatten
 
+from emcee_jax._src.log_prob_fn import LogProbFn
 from emcee_jax._src.ravel_util import ravel_ensemble
-from emcee_jax._src.types import Array, LogProbFn, PyTree
+from emcee_jax._src.types import Array, PyTree
 
 
 def wrap_python_log_prob_fn(

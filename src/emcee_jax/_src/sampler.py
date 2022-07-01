@@ -1,284 +1,135 @@
-# mypy: ignore-errors
-
-from functools import partial
-from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional, Tuple, Union
 
 import jax
 import jax.linear_util as lu
 import jax.numpy as jnp
-from jax import random
-from jax.flatten_util import ravel_pytree
-from jax_dataclasses import pytree_dataclass, static_field
+from jax import device_get, random
+from jax.tree_util import tree_flatten, tree_map
 
-from emcee_jax._src.moves.core import Move, StepState, Stretch
-from emcee_jax._src.ravel_util import ravel_ensemble
-from emcee_jax._src.types import (
-    Array,
-    FlatWalkerState,
-    LogProbFn,
-    PyTree,
-    SampleStats,
-    WalkerState,
-    WrappedLogProbFn,
-)
-from emcee_jax.trace import Trace
+from emcee_jax._src.ensemble import Ensemble
+from emcee_jax._src.log_prob_fn import LogProbFn, wrap_log_prob_fn
+from emcee_jax._src.moves.core import Extras, Move, MoveState, Stretch
+from emcee_jax._src.types import Array, PyTree, SampleStats
+
+if TYPE_CHECKING:
+    from arviz import InferenceData
 
 
-@pytree_dataclass
-class SamplerCarry:
-    flat_log_prob_fn: WrappedLogProbFn = static_field()
-    step_state: StepState
+class SamplerState(NamedTuple):
+    move_state: MoveState
+    ensemble: Ensemble
+    extras: Extras
 
 
-@pytree_dataclass
+class Trace(NamedTuple):
+    final_state: SamplerState
+    samples: SamplerState
+    sample_stats: SampleStats
+
+    def to_inference_data(self, **kwargs: Any) -> "InferenceData":
+        from arviz import InferenceData, dict_to_dataset
+
+        import emcee_jax
+
+        # Deal with different possible PyTree shapes
+        samples = self.samples.ensemble.coordinates
+        if not isinstance(samples, dict):
+            flat, _ = tree_flatten(samples)
+            samples = {f"param_{n}": x for n, x in enumerate(flat)}
+
+        # Deterministics also live in samples
+        deterministics = self.samples.ensemble.deterministics
+        if deterministics is not None:
+            if not isinstance(deterministics, dict):
+                flat, _ = tree_flatten(deterministics)
+                deterministics = {f"det_{n}": x for n, x in enumerate(flat)}
+            for k in list(deterministics.keys()):
+                if k in samples:
+                    assert f"{k}_det" not in samples
+                    deterministics[f"{k}_det"] = deterministics.pop(k)
+            samples = dict(samples, **deterministics)
+
+        # ArviZ has a different convention about axis locations. It wants (chain,
+        # draw, ...) whereas we produce (draw, chain, ...).
+        samples = tree_map(lambda x: jnp.swapaxes(x, 0, 1), samples)
+
+        # Convert sample stats to ArviZ's preferred style
+        sample_stats = dict(
+            self.sample_stats, lp=self.samples.ensemble.log_probability
+        )
+        renames = [("accept_prob", "acceptance_rate")]
+        for old, new in renames:
+            if old in sample_stats:
+                sample_stats[new] = sample_stats.pop(old)
+        sample_stats = tree_map(lambda x: jnp.swapaxes(x, 0, 1), sample_stats)
+
+        return InferenceData(
+            posterior=dict_to_dataset(device_get(samples), library=emcee_jax),
+            sample_stats=dict_to_dataset(
+                device_get(sample_stats), library=emcee_jax
+            ),
+            **kwargs,
+        )
+
+
+@dataclass(frozen=True, init=False)
 class EnsembleSampler:
-    wrapped_log_prob_fn: lu.WrappedFun = static_field()
+    wrapped_log_prob_fn: lu.WrappedFun
     move: Move
 
-    @classmethod
-    def setup(
-        cls,
+    def __init__(
+        self,
         log_prob_fn: LogProbFn,
         *,
         move: Optional[Move] = None,
         log_prob_args: Tuple[Any, ...] = (),
         log_prob_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> "EnsembleSampler":
-        move = Stretch() if move is None else move
+    ):
         log_prob_kwargs = {} if log_prob_kwargs is None else log_prob_kwargs
-        wrapped_log_prob_fn = lu.wrap_init(
-            partial(log_prob_fn, *log_prob_args, **log_prob_kwargs)
+        wrapped_log_prob_fn = wrap_log_prob_fn(
+            log_prob_fn, *log_prob_args, **log_prob_kwargs
         )
-        wrapped_log_prob_fn = handle_deterministics_and_nans(
-            wrapped_log_prob_fn
-        )
-        return cls(wrapped_log_prob_fn, move)
+        object.__setattr__(self, "wrapped_log_prob_fn", wrapped_log_prob_fn)
+
+        move = Stretch() if move is None else move
+        object.__setattr__(self, "move", move)
 
     def init(
         self,
-        init_key: random.KeyArray,
-        ensemble: Union[WalkerState, Array],
-    ):
-        # Handle cases when either an ensemble or array is passed as input
-        is_state = isinstance(ensemble, WalkerState)
-        is_state = is_state or isinstance(ensemble, FlatWalkerState)
-        if not is_state:
-            coordinates = ensemble
-            log_probability, deterministics = jax.vmap(
-                self.wrapped_log_prob_fn.call_wrapped
-            )(coordinates)
-        else:
-            coordinates = ensemble.coordinates
-            log_probability = ensemble.log_probability
-            deterministics = ensemble.deterministics
-
-        # Work out the ravel/unravel operations for this ensemble
-        coordinates, unravel_coordinates = ravel_ensemble(coordinates)
-        deterministics, unravel_deterministics = ravel_ensemble(deterministics)
-
-        # Deal with the case where deterministics are not provided
-        deterministics = deterministics.reshape((coordinates.shape[0], -1))
-
-        if log_probability.shape != coordinates.shape[:1]:
-            raise ValueError(
-                "Invalid shape for initial log_probability: expected "
-                f"{coordinates.shape[:1]} but found {log_probability.shape}"
-            )
-
-        flat_log_prob_fn = flatten_log_prob_fn(
-            self.wrapped_log_prob_fn, unravel_coordinates
-        ).call_wrapped
-
-        # Set up a flattened version of the ensemble state
-        initial_ensemble = FlatWalkerState(
-            coordinates=coordinates,
-            deterministics=deterministics,
-            log_probability=log_probability,
-        )
-
-        # Initialize the move function
-        initial_carry = self.move.init(
-            flat_log_prob_fn, init_key, initial_ensemble
-        )
-
-        return SamplerCarry(
-            flat_log_prob_fn=flat_log_prob_fn, step_state=initial_carry
-        )
-
-
-def sampler(
-    log_prob_fn: LogProbFn,
-    *,
-    move: Optional[Move] = None,
-    log_prob_args: Tuple[Any, ...] = (),
-    log_prob_kwargs: Optional[Dict[str, Any]] = None,
-) -> Callable[..., Trace]:
-    move = Stretch() if move is None else move
-    log_prob_kwargs = {} if log_prob_kwargs is None else log_prob_kwargs
-    wrapped_log_prob_fn = lu.wrap_init(
-        partial(log_prob_fn, *log_prob_args, **log_prob_kwargs)
-    )
-    wrapped_log_prob_fn = handle_deterministics_and_nans(wrapped_log_prob_fn)
-
-    @partial(jax.jit, static_argnames=["steps"])
-    def sample(
         random_key: random.KeyArray,
-        ensemble: Union[WalkerState, Array],
-        steps: int = 1000,
-        tune: Optional[int] = None,
+        ensemble: Union[Ensemble, Array],
+    ) -> SamplerState:
+        initial_ensemble = Ensemble.init(self.wrapped_log_prob_fn, ensemble)
+        move_state, extras = self.move.init(random_key, initial_ensemble)
+        return SamplerState(move_state, initial_ensemble, extras)
+
+    def step(
+        self,
+        random_key: random.KeyArray,
+        state: SamplerState,
+        *,
+        tune: bool = False,
+    ) -> Tuple[SamplerState, SampleStats]:
+        new_state, stats = self.move.step(
+            self.wrapped_log_prob_fn, random_key, *state, tune=tune
+        )
+        return SamplerState(*new_state), stats
+
+    def sample(
+        self,
+        random_key: random.KeyArray,
+        state: SamplerState,
+        num_steps: int,
+        *,
+        tune: bool = False,
     ) -> Trace:
-        init_key, tune_key, sample_key = jax.random.split(random_key, 3)
+        def one_step(
+            state: SamplerState, key: random.KeyArray
+        ) -> Tuple[SamplerState, Tuple[SamplerState, SampleStats]]:
+            state, stats = self.step(key, state, tune=tune)
+            return state, (state, stats)
 
-        # Handle cases when either an ensemble or array is passed as input
-        is_state = isinstance(ensemble, WalkerState)
-        is_state = is_state or isinstance(ensemble, FlatWalkerState)
-        if not is_state:
-            coordinates = ensemble
-            log_probability, deterministics = jax.vmap(
-                wrapped_log_prob_fn.call_wrapped
-            )(coordinates)
-        else:
-            coordinates = ensemble.coordinates
-            log_probability = ensemble.log_probability
-            deterministics = ensemble.deterministics
-
-        # Work out the ravel/unravel operations for this ensemble
-        coordinates, unravel_coordinates = ravel_ensemble(coordinates)
-        deterministics, unravel_deterministics = ravel_ensemble(deterministics)
-
-        # Deal with the case where deterministics are not provided
-        deterministics = deterministics.reshape((coordinates.shape[0], -1))
-
-        if log_probability.shape != coordinates.shape[:1]:
-            raise ValueError(
-                "Invalid shape for initial log_probability: expected "
-                f"{coordinates.shape[:1]} but found {log_probability.shape}"
-            )
-
-        # TODO: This call to vmap could probably be replaced directly with the
-        # batching primitives to take advantage of chaining of linear_util
-        # wrapped functions for better performance.
-        flat_log_prob_fn = flatten_log_prob_fn(
-            wrapped_log_prob_fn, unravel_coordinates
-        ).call_wrapped
-
-        # Set up a flattened version of the ensemble state
-        initial_ensemble = FlatWalkerState(
-            coordinates=coordinates,
-            deterministics=deterministics,
-            log_probability=log_probability,
-        )
-
-        # Initialize the move function
-        assert move is not None
-        initial_carry = move.init(flat_log_prob_fn, init_key, initial_ensemble)
-
-        if tune is not None:
-
-            def tune_step(
-                carry: StepState, key: random.KeyArray
-            ) -> Tuple[StepState, Tuple[StepState, SampleStats]]:
-                assert move is not None
-                carry, stats = move.step(
-                    flat_log_prob_fn, key, carry, tune=True
-                )
-                return carry, (carry, stats)
-
-            # Run the sampler
-            initial_carry, _ = jax.lax.scan(
-                tune_step, initial_carry, random.split(tune_key, steps)
-            )
-
-        def wrapped_step(
-            carry: StepState, key: random.KeyArray
-        ) -> Tuple[StepState, Tuple[StepState, SampleStats]]:
-            assert move is not None
-            carry, stats = move.step(flat_log_prob_fn, key, carry)
-            return carry, (carry, stats)
-
-        # Run the sampler
-        (_, flat_ensemble, final_extras), (
-            (_, flat_samples, extras_trace),
-            sample_stats,
-        ) = jax.lax.scan(
-            wrapped_step, initial_carry, random.split(sample_key, steps)
-        )
-
-        # Unravel the final state to have the correct structure
-        unravel_coordinates = jax.vmap(unravel_coordinates)
-        unravel_deterministics = jax.vmap(unravel_deterministics)
-        coordinates = unravel_coordinates(flat_ensemble.coordinates)
-        deterministics = unravel_deterministics(flat_ensemble.deterministics)
-        final_ensemble = WalkerState(
-            coordinates=coordinates,
-            deterministics=deterministics,
-            log_probability=flat_ensemble.log_probability,
-        )
-
-        # Unravel the chain to have the correct structure
-        coordinates = jax.vmap(unravel_coordinates)(flat_samples.coordinates)
-        deterministics = jax.vmap(unravel_deterministics)(
-            flat_samples.deterministics
-        )
-        samples = WalkerState(
-            coordinates=coordinates,
-            deterministics=deterministics,
-            log_probability=flat_samples.log_probability,
-        )
-        return Trace(
-            final_state=final_ensemble,
-            final_extras=final_extras,
-            samples=samples,
-            extras=extras_trace,
-            sample_stats=sample_stats,
-        )
-
-    return sample
-
-
-@lu.transformation
-def handle_deterministics_and_nans(
-    *args: Any, **kwargs: Any
-) -> Generator[Tuple[Any, Any], Union[Any, Tuple[Any, Any]], None]:
-    result = yield args, kwargs
-
-    # Unwrap deterministics if they are provided or default to None
-    if isinstance(result, tuple):
-        log_prob, *deterministics = result
-        if len(deterministics) == 1:
-            deterministics = deterministics[0]
-    else:
-        log_prob = result
-        deterministics = None
-
-    if log_prob is None:
-        raise ValueError(
-            "A log probability function must return a scalar value, got None"
-        )
-    if log_prob.shape != ():
-        raise ValueError(
-            "A log probability function must return a scalar; "
-            f"computed shape is '{log_prob.shape}', expected '()'"
-        )
-
-    # Handle the case where the computed log probability is NaN by replacing it
-    # with negative infinity so that it gets rejected
-    log_prob = jax.lax.cond(
-        jnp.isnan(log_prob), lambda: -jnp.inf, lambda: log_prob
-    )
-
-    yield log_prob, deterministics
-
-
-@lu.transformation
-def flatten_log_prob_fn(
-    unravel: Callable[[Array], Array], x: Array
-) -> Generator[
-    Tuple[Array, Union[PyTree, Dict[str, Any]]],
-    Tuple[Array, Union[PyTree, Dict[str, Any]]],
-    None,
-]:
-    x_flat = unravel(x)
-    log_probability, deterministics = yield (x_flat,), {}
-    deterministics, _ = ravel_pytree(deterministics)
-    yield log_probability, deterministics
+        keys = random.split(random_key, num_steps)
+        final, (trace, stats) = jax.lax.scan(one_step, state, keys)
+        return Trace(final, trace, stats)

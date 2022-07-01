@@ -20,13 +20,7 @@ from jax import random
 from jax.tree_util import tree_map
 
 from emcee_jax._src.moves.core import MoveState, RedBlue, StepState
-from emcee_jax._src.types import (
-    Array,
-    FlatWalkerState,
-    PyTree,
-    SampleStats,
-    WrappedLogProbFn,
-)
+from emcee_jax._src.types import Array, PyTree, SampleStats
 
 
 class HMCState(NamedTuple):
