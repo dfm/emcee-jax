@@ -19,5 +19,5 @@ __license__ = "MIT"
 __description__ = "The Python ensemble sampling toolkit for MCMC"
 
 from emcee_jax import host_callback as host_callback, moves as moves
-from emcee_jax._src.sampler import sampler as sampler
+from emcee_jax._src.sampler import EnsembleSampler as EnsembleSampler
 from emcee_jax.emcee_jax_version import __version__ as __version__

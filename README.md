@@ -13,10 +13,11 @@ A simple example:
 ...     return -(a1 * (x2 - x1**2)**2 + (1 - x1)**2) / a2
 ...
 >>> num_walkers, num_steps = 100, 1000
->>> key1, key2 = jax.random.split(jax.random.PRNGKey(0))
+>>> key1, key2, key3 = jax.random.split(jax.random.PRNGKey(0), 3)
 >>> coords = jax.random.normal(key1, shape=(num_walkers, 2))
->>> sample = emcee_jax.sampler(log_prob)
->>> trace = sample(key2, coords, steps=num_steps)
+>>> sampler = emcee_jax.EnsembleSampler(log_prob)
+>>> state = sampler.init(key2, coords)
+>>> trace = sampler.sample(key3, state, num_steps)
 
 ```
 
@@ -31,13 +32,14 @@ An example using PyTrees as input coordinates:
 ...     return -(a1 * (x2 - x1**2)**2 + (1 - x1)**2) / a2
 ...
 >>> num_walkers, num_steps = 100, 1000
->>> key1, key2, key3 = jax.random.split(jax.random.PRNGKey(0), 3)
+>>> key1, key2, key3, key4 = jax.random.split(jax.random.PRNGKey(0), 4)
 >>> coords = {
 ...     "x": jax.random.normal(key1, shape=(num_walkers,)),
 ...     "y": jax.random.normal(key2, shape=(num_walkers,)),
 ... }
->>> sample = emcee_jax.sampler(log_prob)
->>> trace = sample(key3, coords, steps=num_steps)
+>>> sampler = emcee_jax.EnsembleSampler(log_prob)
+>>> state = sampler.init(key3, coords)
+>>> trace = sampler.sample(key4, state, num_steps)
 
 ```
 
@@ -56,10 +58,11 @@ An example that includes deterministics:
 ...     return log_prob_value, {"some_number": some_number}
 ...
 >>> num_walkers, num_steps = 100, 1000
->>> key1, key2 = jax.random.split(jax.random.PRNGKey(0))
+>>> key1, key2, key3 = jax.random.split(jax.random.PRNGKey(0), 3)
 >>> coords = jax.random.normal(key1, shape=(num_walkers, 2))
->>> sample = emcee_jax.sampler(log_prob)
->>> trace = sample(key2, coords, steps=num_steps)
+>>> sampler = emcee_jax.EnsembleSampler(log_prob)
+>>> state = sampler.init(key2, coords)
+>>> trace = sampler.sample(key3, state, num_steps)
 
 ```
 
@@ -78,9 +81,10 @@ You can even use pure-Python log probability functions:
 ...     return -(a1 * np.square(x2 - x1**2) + np.square(1 - x1)) / a2
 ...
 >>> num_walkers, num_steps = 100, 1000
->>> key1, key2 = jax.random.split(jax.random.PRNGKey(0))
+>>> key1, key2, key3 = jax.random.split(jax.random.PRNGKey(0), 3)
 >>> coords = jax.random.normal(key1, shape=(num_walkers, 2))
->>> sample = emcee_jax.sampler(log_prob)
->>> trace = sample(key2, coords, steps=num_steps)
+>>> sampler = emcee_jax.EnsembleSampler(log_prob)
+>>> state = sampler.init(key2, coords)
+>>> trace = sampler.sample(key3, state, num_steps)
 
 ```
