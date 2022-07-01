@@ -82,9 +82,9 @@ class Composed(Move):
         keys = random.split(random_key, len(self.moves))
         new_state = OrderedDict()
         new_extras = OrderedDict()
-        stats = OrderedDict()
+        new_stats = {}
         for key, (name, move) in zip(keys, self.moves):
-            new, stats[name] = move.step(
+            new, new_stats[name] = move.step(
                 log_prob_fn,
                 key,
                 state[name],
@@ -93,6 +93,20 @@ class Composed(Move):
                 tune=tune,
             )
             new_state[name], ensemble, new_extras[name] = new
+
+        stats = {"move_stats": new_stats}
+        if any("accept" in s for s in new_stats.values()):
+            stats["accept"] = jnp.any(
+                jnp.stack([s["accept"] for s in new_stats.values()], axis=-1),
+                axis=-1,
+            )
+        if any("accept_prob" in s for s in new_stats.values()):
+            stats["accept_prob"] = jnp.prod(
+                jnp.stack(
+                    [s["accept_prob"] for s in new_stats.values()], axis=-1
+                ),
+                axis=-1,
+            )
         return (new_state, ensemble, new_extras), stats
 
 
